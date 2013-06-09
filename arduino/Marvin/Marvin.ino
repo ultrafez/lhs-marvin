@@ -19,6 +19,10 @@
 #define EXTERNALDOOR A2
 #define DOORBELL A1
 
+#define SIGN 7
+#define SIGN_OFF 0
+#define SIGN_ON 1
+
 char input[10];
 char last;
 int count;
@@ -113,14 +117,15 @@ int ReadTemp(void)
   
   Wire.requestFrom(0x4D, 1); //request temperature data
   
-  if(Wire.available()){ //if sensor responds
-    temperature = Wire.read(); //receive data and assign to temperature variable
-  }
-    if(temperature > 150){ //if temperature is measured as more than 150C then map for negative values
+  if(!Wire.available())
+    return 0;
+  //if sensor responds
+  temperature = Wire.read(); //receive data and assign to temperature variable
+  if(temperature > 150){ //if temperature is measured as more than 150C then map for negative values
     //when the temperature goes below zero, temp values start decreasing from 255. Therefore they need to be mapped to negative numbers:
-      temperature = map(temperature, 255, 155, -1, -100);
-    }
-    return temperature-1; //return measured temperature
+    temperature = map(temperature, 255, 155, -1, -100);
+  }
+  return temperature-1; //return measured temperature
 }
 
 void FireLaser (int pulses)
@@ -143,11 +148,11 @@ void setup()
   pinMode(11, OUTPUT);     
   pinMode(12, OUTPUT);     
   pinMode(13, OUTPUT);     
-  pinMode(PIR, INPUT);
+  pinMode(PIR, INPUT_PULLUP);
   pinMode(LASER, OUTPUT);
-  pinMode(INTERNALDOOR, INPUT);
-  digitalWrite(PIR, HIGH);
-  digitalWrite(INTERNALDOOR, HIGH);
+  pinMode(INTERNALDOOR, INPUT_PULLUP);
+  pinMode(SIGN, OUTPUT);
+  digitalWrite(SIGN, SIGN_OFF);
   FireLaser(10);
   pan.attach(PANSERVO);
   pan.write(panangle);
@@ -248,6 +253,9 @@ void loop()
           };
           Serial.println(",0,0");
           break;
+	case 'S':
+	  digitalWrite(SIGN, (input[1] == '1') ? SIGN_ON : SIGN_OFF);
+	  break;
       };
       count=0;
     } else {
