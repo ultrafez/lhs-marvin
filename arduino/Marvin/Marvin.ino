@@ -15,11 +15,11 @@
 #define PIR 2
 #define LASER 3
 #define PANSERVO 6
+#define SIGN 8
 #define INTERNALDOOR A3
 #define EXTERNALDOOR A2
 #define DOORBELL A1
 
-#define SIGN 7
 #define SIGN_OFF 0
 #define SIGN_ON 1
 
