@@ -44,8 +44,9 @@
 #define STATUS_OFF 1
 #define STATUS_ON 0
 
-#define STATUS_ON_PERIOD 200
-#define STATUS_OFF_PERIOD 2000
+// These will be inverted when no ping is seen for a while
+#define STATUS_ON_PERIOD 2000
+#define STATUS_OFF_PERIOD 200
 
 static bool status_lit;
 static unsigned long status_timeout;
@@ -69,13 +70,13 @@ Adafruit_NFCShield_I2C nfc(A3, A2);
 #else
 #endif
 
-// Color convention for serial wires:
-//  White: Computer->Door
-//  Purple: Door->Computer
 #define comSerial Serial
 
-uint32_t current_time;
-uint32_t last_time_tick;
+static uint32_t current_time;
+static uint32_t last_time_tick;
+
+#define PING_TIMEOUT 90
+static int ping_ticks;
 
 #define MAX_TAG_LEN 20
 unsigned long relock_time;
@@ -88,25 +89,159 @@ static unsigned long pin_timeout;
 
 #define MAX_MSG_SIZE 32
 static uint8_t msg_buf[MAX_MSG_SIZE];
-int msg_buf_len;
+static int msg_buf_len;
 
 // Must be a power of two
 #define LOG_BUF_SIZE 1024
 uint8_t log_buf[LOG_BUF_SIZE];
-int log_tail;
-int log_head;
+// Bytes not sent to host
+static int log_tail;
+// Bytes not acked by host (may need retransmit)
+static int log_ack_tail;
+// First unused log byte
+static int log_head;
 
 uint8_t my_addr = '?';
 
+/* Communication protocol is as follows:
+    RS232, 9600 baud, 8N1
+    5-pin 180deg DIN (same as MIDI), pinout:
+      1 - +12V (Red)
+      2 - Ground (Black)
+      3 - N/C
+      4 - Device data out (host RX) (Purple)
+      5 - Device data in (host TX) (White)
+
+    Multiple door lock devices may be connected in a loop with a
+    single host pc interface.
+
+    All communication is ASCII text, with the following frame format:
+      Message type character (see MSG_* below)
+      Address character
+      Data bytes (if applicable, variable length)
+      CRC16 (4 characters)
+      Newline terminator (ascii 0x0A)
+
+    Terminator bytes should never appear elsewhere in the frame.
+    A host will typically send 'X\n' to force a frame reset.
+
+    A device initially has an unassigned address ('?'). With the exception
+    of MSG_SET_ADDRESS and MSG_PING, a device will pass through commands
+    not addressed to it, and drop corrupted frames.  The address byte
+    always identifies the device (source or destination depending on
+    context).  The host does not have an address, and does not pass through
+    messages.
+
+    Messages will always be transmitted as a single, complete frame.
+
+    Tag IDs are hex encoded, with a pair of hex characters for each ID byte.
+
+    Timestamps are base64 encoded unix time values. 6 characters encode a 
+
+    Hex characters should be uppercase.
+
+    CRC16 are calculated using the xmodem algorithm and encoded as 4 hex
+    characters (big-endian byte order).
+
+    After sending a command, a host should wait for the response before
+    sending annother command.  If a response is not recieved then a
+    full device re-enumeration should be performed.
+
+    Enumeration commands:
+
+      MSG_SET_ADDRESS
+	Enumerate devices.  The address field should initially be set to '0'.
+	The device will set its address to the value in the message address
+	field.  The device will increment the message address field before
+	forwarding this message.
+	This allows operation of multiple devices in a ring.
+	For a single device the expected response is MSG_SET_ADDRESS with
+       	an address of '1'.
+	Data: None
+
+      MSG_PING
+	Check that all devices are still alive and sync clocks.
+	If the device address matches then the device will increment
+	the address (as for MSG_SET_ADDRESS) and set its internal clock.
+	If the address does not match then the device will set the address
+	to '!'.  This indicated something strange has happened and
+	full device Enumeration should be performed.
+	Data: Current host timestamp
+
+      MSG_COMMENT
+	For debug prposes only.  These frames should be ignored, and do not
+	follow the normal frame format.  All characters up to the next newline
+	should be ignored.
+
+    Host to device commands:
+
+      MSG_LOG_GET
+	Read the next log entry.
+	Data: None
+	Response: MSG_LOG_VALUE
+
+      MSG_LOG_CLEAR
+	Discard the current log entry.
+	Data: None
+	Response: MSG_ACK
+
+      MSG_KEY_RESET
+	Revoke all tags.  Resets the CRC returned by MSG_CRC_HASH.
+	Data: None
+	Response: MSG_ACK
+
+      MSG_KEY_ADD
+	Add an access tag.
+	Data: Tag ID followed by optional space (ascii 0x20) and PIN
+	Response: MSG_ACK
+
+      MSG_KEY_INFO
+	Calculate the current keyset hash.  This can be used to determine
+       	whether a newly enumerated device matches the current access list.
+	Data: None
+	Response: MSG_KEY_HASH
+
+    Device to host commands:
+
+      MSG_EVENT
+	Indicates something interesting happened.  Maybe be sent at any time,
+	including between recipt of a command and transmission of the response.
+	(though not in the middle of a message)
+	Data: none
+
+      MSG_LOG_VALUE
+	The contents of the first log entry.  This must be explicitly
+       	cleared with MSG_LOG_CLEAR before the next entry can be accessed.
+	A log entry is a 6-byte timestamp, an event byte, and a tag ID.
+	Event bytes are as follows:
+	  'R': Tag rejected
+	  'P': Incorrect pin entered for tag
+	  'O': Door opened by tag.
+	Data: Log entry, or empty if there are no remaining log entries.
+
+      MSG_ACK
+	Indicate successful completion of MSG_LOG_CLEAR, MSG_KEY_RESET or
+	MSG_KEY_ADD command.
+	Data: None
+
+      MSG_KEY_HASH
+	The hash of the current keyset.  This is the CRC16 of all
+	previously MSG_ADD_KEY commands, plus a null terminator
+       	after each one.
+ */
 enum {
     MSG_SET_ADDRESS = 'S',
-    MSG_ACK = 'A',
-    MSG_EVENT = 'E',
-    MSG_GET_LOG = 'G',
-    MSG_LOG_VALUE = 'V',
     MSG_PING = 'P',
     MSG_COMMENT = '#',
-    MSG_KEY = 'K',
+    MSG_LOG_GET = 'G',
+    MSG_LOG_CLEAR = 'C',
+    MSG_KEY_RESET = 'R',
+    MSG_KEY_ADD = 'N',
+    MSG_KEY_INFO = 'K',
+    MSG_EVENT = 'E',
+    MSG_ACK = 'A',
+    MSG_LOG_VALUE = 'V',
+    MSG_KEY_HASH = 'H',
 };
 
 #if defined(RFID_SERIAL)
@@ -379,15 +514,15 @@ tag_scanned(const char *tag)
 {
   if (find_tag(tag, last_pin) == -1)
     {
+      fail_timeout = now_plus(FAIL_INTERVAL);
+      pin_pos = NULL;
+      pin_valid = false;
+      pin_timeout = 0;
       if (strcmp(last_tag, tag) != 0)
 	{
 	  /* Unrecognised tag.  */
 	  strcpy(last_tag, tag);
 	  log_tag('R');
-	  fail_timeout = now_plus(FAIL_INTERVAL);
-	  pin_pos = NULL;
-	  pin_valid = false;
-	  pin_timeout = 0;
 	}
       return;
     }
@@ -438,6 +573,7 @@ send_log_packet(void)
   buf[0] = MSG_LOG_VALUE;
   buf[1] = my_addr;
   i = 2;
+  log_tail = log_ack_tail;
   while (log_head != log_tail)
     {
       c = log_pop();
@@ -469,12 +605,6 @@ add_key(uint8_t *key, int len)
 {
   int offset = EEPROM_TAG_START;
   uint8_t c;
-
-  if (find_tag((char *)key, NULL) != -1)
-    {
-      send_ack();
-      return;
-    }
 
   while (true)
     {
@@ -510,14 +640,13 @@ reset_keys(void)
 static void
 key_info(void)
 {
-  uint8_t buf[7];
+  uint8_t buf[6];
   uint16_t crc;
   int offset;
   uint8_t val;
 
-  buf[0] = MSG_KEY;
+  buf[0] = MSG_KEY_HASH;
   buf[1] = my_addr;
-  buf[2] = 'i';
   crc = 0;
   offset = EEPROM_TAG_START;
   while (true)
@@ -528,64 +657,66 @@ key_info(void)
       crc = _crc_xmodem_update(crc, val);
       offset++;
     }
-  write_hex8((char *)buf + 3, crc >> 8);
-  write_hex8((char *)buf + 5, crc & 0xff);
-  send_packet(buf, 7);
+  write_hex8((char *)buf + 2, crc >> 8);
+  write_hex8((char *)buf + 4, crc & 0xff);
+  send_packet(buf, 6);
 }
 
 static void
 process_msg(uint8_t *msg, int len)
 {
-  if (len < 1)
-    return;
-
-  switch (msg[0])
+  if (msg[0] == MSG_SET_ADDRESS)
     {
-    case MSG_SET_ADDRESS:
-      if (len < 2)
-	return;
       my_addr = msg[1];
       msg[1]++;
-      break;
-    case MSG_ACK:
+    }
+  else if (msg[0] == MSG_PING)
+    {
       if (msg[1] != my_addr)
-	break;
-      return;
-    case MSG_GET_LOG:
-      if (len != 2)
-	break;
-      if (msg[1] != my_addr)
-	break;
-      send_log_packet();
-      return;
-    case MSG_PING:
-      if (len < 2)
-	return;
-      if (msg[1] != my_addr)
+	msg[1] = '!';
+      else
 	{
-	  msg[1] = '!';
+	  msg[1]++;
+	  if (len == 8)
+	    set_time(msg + 2);
+	  ping_ticks = PING_TIMEOUT;
+	}
+    }
+  else if (msg[0] != MSG_COMMENT)
+    {
+      if (msg[1] != my_addr)
+	return;
+      switch (msg[0])
+	{
+	case MSG_LOG_CLEAR:
+	  if (len != 2)
+	    return;
+	  log_ack_tail = log_tail;
+	  send_ack();
+	  return;
+	case MSG_LOG_GET:
+	  if (len != 2)
+	    break;
+	  send_log_packet();
+	  return;
+	case MSG_KEY_RESET:
+	  if (len != 2)
+	    return;
+	  reset_keys();
+	  return;
+	case MSG_KEY_ADD:
+	  if (len < 4)
+	    return;
+	  add_key(msg + 2, len - 2);
+	  return;
+	case MSG_KEY_INFO:
+	  if (len != 2)
+	    return;
+	  key_info();
+	  return;
+	default:
 	  break;
 	}
-      msg[1]++;
-      if (len == 8)
-	set_time(msg + 2);
-      break;
-    case MSG_COMMENT:
-      break;
-    case MSG_KEY:
-      if (len < 3)
-	return;
-      if (msg[1] != my_addr)
-	break;
-      if (msg[2] == '+')
-	add_key(msg + 3, len - 3);
-      else if (msg[2] == '*')
-	reset_keys();
-      else if (msg[2] == '?')
-	key_info();
-      return;
-    default:
-      break;
     }
 
   send_packet(msg, len);
@@ -595,6 +726,7 @@ process_msg(uint8_t *msg, int len)
 static bool
 verify_crc(const uint8_t *msg, int len)
 {
+  // TODO: Implement this
   return false;
 }
 
@@ -614,7 +746,7 @@ do_serial(void)
       c = comSerial.read();
       if (is_terminator(c))
 	{
-	  if (msg_buf_len > 4)
+	  if (msg_buf_len >= 6)
 	    {
 	      if (!verify_crc(msg_buf, msg_buf_len))
 		process_msg(msg_buf, msg_buf_len - 4);
@@ -757,12 +889,19 @@ do_timer(void)
     {
       last_time_tick += 1000;
       current_time++;
+      if (ping_ticks > 0)
+	ping_ticks--;
     }
 
   if (status_timeout == 0 || time_after(status_timeout))
     {
+      bool led_on;
+
       status_lit = !status_lit;
-      digitalWrite(STATUS_PIN, status_lit ? STATUS_ON : STATUS_OFF);
+      led_on = status_lit;
+      if (ping_ticks == 0)
+	led_on = !led_on;
+      digitalWrite(STATUS_PIN, led_on ? STATUS_ON : STATUS_OFF);
       status_timeout = now_plus(status_lit ? STATUS_ON_PERIOD : STATUS_OFF_PERIOD);
     }
 }

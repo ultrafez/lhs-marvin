@@ -1,13 +1,71 @@
 #! /usr/bin/env python
 
+# NOTE: The master copy of this script is kept in github.
+# Please keep that up to date when making changes.
+
+# Control electronic door locks
+
+import sys
 import crc16
 import serial
 import time
 import MySQLdb
-import ConfigParser;
+import ConfigParser
+import threading
+import daemon
+import optparse
+import os
 
-POLL_TIMEOUT = 60
-POLL_PERIOD = 1
+class PidFile(object):
+    """Context manager that locks a pid file.  Implemented as class
+    not generator because daemon.py is calling .__exit__() with no parameters
+    instead of the None, None, None specified by PEP-343."""
+    # pylint: disable=R0903
+
+    def __init__(self, path):
+        self.path = path
+        self.pidfile = None
+
+    def __enter__(self):
+        self.pidfile = open(self.path, "a+")
+        self.pidfile.seek(0)
+        self.pidfile.truncate()
+        self.pidfile.write(str(os.getpid()))
+        self.pidfile.flush()
+        self.pidfile.seek(0)
+        return self.pidfile
+
+    def __exit__(self, exc_type=None, exc_value=None, exc_tb=None):
+        try:
+            self.pidfile.close()
+        except IOError as err:
+            # ok if file was just closed elsewhere
+            if err.errno != 9:
+                raise
+        os.remove(self.path)
+
+SERIAL_PING_INTERVAL = 60
+# Polling period is also serial read timeout
+SERIAL_POLL_PERIOD = 1
+
+DB_POLL_PERIOD = 10
+
+class KillableThread(threading.Thread):
+    def __init__(self):
+        super(KillableThread, self).__init__()
+        self._killed = False
+
+    def kill(self):
+        self._killed = True
+
+    def check_kill(self):
+        if self._killed:
+            raise KeyboardInterrupt
+
+    def delay(self, secs):
+        for i in xrange(0, secs):
+            self.check_kill()
+            time.sleep(1)
 
 class Tag(object):
     NONE = 0
@@ -33,25 +91,32 @@ class Tag(object):
     def __ne__(self, other):
         return not self.__eq__(other)
 
-class TagDB(object):
-    def __init__(self, user, passwd):
-        self.db_user = user
-        self.db_passwd = passwd
+# Handles both key updates and logging
+class DBThread(KillableThread):
+    def __init__(self, g):
+        super(DBThread, self).__init__()
+        self.g = g
+        self.db_user = self.g.config.get("db", "user")
+        self.db_passwd = self.g.config.get("db", "password")
         self.db = None
         self.tags = []
-    def keylist(self, fn):
+        self.lock = threading.Lock()
+
+    def _keylist(self, fn):
         k = []
         for t in self.tags:
             if fn(t):
                 k.append(t.tag_id + ' ' + t.pin)
         return k
+    def _db_cursor(self):
+        self.db = MySQLdb.connect(host="localhost", user=self.db_user,
+                passwd=self.db_passwd, db="hackspace")
+        return self.db.cursor();
     # Returns true if tag list has changed
     def update(self):
         changed = False
         try:
-            self.db = MySQLdb.connect(host="localhost", user=self.db_user,
-                    passwd=self.db_passwd, db="hackspace")
-            cur = self.db.cursor()
+            cur = self._db_cursor()
             cur.execute( \
                 "SELECT rfid_tags.card_id, rfid_tags.pin, people.access" \
                 " FROM people INNER JOIN rfid_tags" \
@@ -79,9 +144,40 @@ class TagDB(object):
             self.tags = []
             raise
         return changed
+    def _write_log(self, tstr, msg):
+        dbg("LOG: %s %s" % (tstr, msg));
+        cur = self._db_cursor()
+        cur.execute( \
+                "INSERT INTO security (time, message)" \
+                " VALUES ('%s', '%s');" % (tstr, msg))
+    # Can be safely called from other threads
+    def log(self, t, msg):
+        tstr = time.strftime("%Y-%m-%d %H:%M:%S", t)
+        # Closure to avoid deadlock
+        def logfn():
+            self.lock.acquire()
+            self._write_log(tstr, msg)
+            self.lock.release()
+        self.g.schedule(logfn)
+    def sync_keys(self):
+        self.lock.acquire()
+        try:
+            self.g.door_up.set_keys(self._keylist(Tag.upstairs_ok))
+            self.g.door_down.set_keys(self._keylist(Tag.downstairs_ok))
+        finally:
+            self.lock.release()
+    def run(self):
+        while True:
+            self.lock.acquire()
+            try:
+                if self.update():
+                    self.g.schedule(self.sync_keys)
+            finally:
+                self.lock.release()
+            self.delay(DB_POLL_PERIOD)
 
 def dbg(msg):
-    if True:
+    if do_debug:
         print msg
 
 def encode64(val):
@@ -130,13 +226,18 @@ def decode_time(s):
 def crc_str(s):
     return "%04X" % crc16.crc16xmodem(s)
 
-class DoorMonitor(object):
+# Communicate with door locks.
+# For Protocol details see DoorLock.ino
+class DoorMonitor(KillableThread):
     def __init__(self, port):
-        self.portname = port;
+        super(DoorMonitor, self).__init__()
+        self.port_name = port;
         self.ser = None
         self.seen_event = False
         self.sync = False
+        self.rekey = False
         self.keys = []
+        self.lock = threading.Lock()
 
     def read_response(self):
         while True:
@@ -166,16 +267,19 @@ class DoorMonitor(object):
         self.ser.write("\n")
         return self.read_response()
 
+    def do_cmd_expect(self, cmd, response, error):
+        r = self.do_cmd(cmd)
+        if r != response:
+            raise Exception(error)
+
     def send_ping(self):
         t = encoded_time()
-        r = self.do_cmd("P0" + t)
-        if r != "P1" + t:
-            raise Exception("Device not accepting ping")
+        self.do_cmd_expect("P0" + t, "P1" + t, "Machine does not go ping")
 
     def resync(self):
         dbg("Resync")
         if self.ser is None:
-            self.ser = serial.Serial(self.portname, 9600, timeout=1)
+            self.ser = serial.Serial(self.port_name, 9600, timeout=SERIAL_POLL_PERIOD)
             self.ser.write("X\n")
             # Wait for a 1s quiet period
             while self.ser.inWaiting():
@@ -183,25 +287,22 @@ class DoorMonitor(object):
                     self.ser.read(1)
                 time.sleep(1)
 
-        # Re-enumerate devices
-        r = self.do_cmd("S0")
-        if r != 'S1':
-            raise Exception("Device not accepting address")
+        # Enumerate devices
+        self.do_cmd_expect("S0", "S1", "Device not accepting address")
         self.send_ping()
-        r = self.do_cmd("K0?")
-        if r != "K0i" + self.key_hash():
+        r = self.do_cmd("K0")
+        if r != "H0" + self.key_hash():
             dbg("Uploading keys")
-            r = self.do_cmd("K0*")
-            if r != 'A0':
-                raise Exception("Device not accepting keys")
+            self.do_cmd_expect("R0", "A0", "Device key reset failed")
             for key in self.keys:
-                self.do_cmd("K0+" + key)
+                self.do_cmd_expect("N0" + key, "A0", "Device not accepting keys")
         self.sync = True
+        self.rekey = False
 
     def poll_event(self):
         if not self.sync:
             return False
-        return self.ser.inWaiting();
+        return self.rekey or self.ser.inWaiting();
 
     def key_hash(self):
         crc = 0
@@ -215,11 +316,20 @@ class DoorMonitor(object):
         t = decode_time(msg[0:6])
         action = msg[6]
         tag = msg[7:]
-        tstr = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
-        print "%s %s %s" % (tstr, action, tag)
+        lt = time.localtime(t)
+        if action == 'R':
+            astr = "Rejected"
+        elif action == 'O':
+            astr = "Opened"
+        elif action == 'P':
+            astr = "BadPIN"
+        else:
+            astr = "Unknown"
+
+        g.dbt.log(lt, "%s: %s %s" % (self.port_name, astr, tag))
 
     def work(self):
-        dbg("Work")
+        dbg("Work %s" % self.port_name)
         try:
             if self.sync:
                 self.send_ping()
@@ -234,7 +344,9 @@ class DoorMonitor(object):
                     break
                 dbg("Log event: %s" % r[2:])
                 self.handle_log(r[2:])
+                self.do_cmd_expect("C0", "A0", "Error clearing event log")
         except KeyboardInterrupt:
+            # Propagate KeyboardInterrupt for thread termination
             raise
         except BaseException as e:
             if self.ser is not None:
@@ -246,26 +358,84 @@ class DoorMonitor(object):
             raise
 
     def set_keys(self, keys):
+        self.lock.acquire()
         self.keys = keys[:]
         self.sync = False
+        self.rekey = True
+        self.lock.release()
 
-config = ConfigParser.SafeConfigParser()
-config.read("/etc/marvin.conf")
-tags = TagDB(config.get("db", "user"), config.get("db", "password"))
-door_up = DoorMonitor("/dev/door_up")
-door_down = DoorMonitor("/dev/door_down")
-tags.update()
-update_tags = True
-while True:
-    if update_tags:
-        door_up.set_keys(tags.keylist(Tag.upstairs_ok))
-        door_down.set_keys(tags.keylist(Tag.downstairs_ok))
-    dbg("Upstairs")
-    door_up.work()
-    dbg("Downstairs")
-    door_down.work()
-    timeout = 0
-    while timeout < POLL_TIMEOUT and not (door_up.poll_event() or door_down.poll_event()):
-        time.sleep(POLL_PERIOD)
-        update_tags = tags.update()
-        timeout += POLL_PERIOD
+    def run(self):
+        self.lock.acquire()
+        while True:
+            try:
+                self.work()
+            except:
+                self.lock.release()
+                raise
+            timeout = 0
+            while (timeout < SERIAL_PING_INTERVAL) and not self.poll_event():
+                self.lock.release()
+                self.delay(SERIAL_POLL_PERIOD)
+                self.lock.acquire()
+                timeout += SERIAL_POLL_PERIOD
+
+class Globals(object):
+    def __init__(self, config):
+        self.config = config
+        self.dbt = DBThread(self)
+        self.door_up = DoorMonitor("/dev/door_up")
+        self.door_down = DoorMonitor("/dev/door_down")
+        self.cond = threading.Condition()
+        self.triggers = []
+
+    # Run a function from the main thread with no locks held
+    def schedule(self, fn):
+        self.cond.acquire()
+        self.triggers.append(fn)
+        self.cond.notify()
+        self.cond.release()
+
+    def run(self):
+        # Ugly.  Do a manual key sync
+        self.dbt.update()
+        self.dbt.sync_keys()
+
+        self.cond.acquire()
+        # Start all the worker threads
+        self.dbt.start()
+        self.door_up.start()
+        self.door_down.start()
+        try:
+            while True:
+                triggers = self.triggers
+                self.triggers = []
+                if len(triggers) == 0:
+                    self.cond.wait(1)
+                else:
+                    self.cond.release()
+                    for fn in triggers:
+                        fn()
+                    self.cond.acquire()
+        finally:
+            self.door_up.kill()
+            self.door_down.kill()
+            self.dbt.kill()
+
+
+op = optparse.OptionParser()
+op.add_option("-d", "--debug", action="store_true", dest="debug", default=False)
+(options, args) = op.parse_args()
+do_debug = options.debug
+
+cfg = ConfigParser.SafeConfigParser()
+cfg.read("/etc/marvin.conf")
+
+dc = daemon.DaemonContext()
+dc.pidfile = PidFile('/var/run/doord.pid')
+if do_debug:
+    dc.detach_process = False
+    dc.stdout = sys.stdout
+    dc.stderr = sys.stderr
+with dc:
+    g = Globals(cfg)
+    g.run()
