@@ -251,7 +251,6 @@ class DoorMonitor(KillableThread):
                 continue
             crc = r[-5:-1]
             r = r[:-5]
-            # FIXME: check CRC
             if crc != crc_str(r):
                 raise Exception("CRC mismatch (exp %s got %s)" % (crc, crc_str(r)))
             if r[0] == 'E':
@@ -319,10 +318,14 @@ class DoorMonitor(KillableThread):
         lt = time.localtime(t)
         if action == 'R':
             astr = "Rejected"
-        elif action == 'O':
-            astr = "Opened"
+        elif action == 'U':
+            astr = "Unlocked"
         elif action == 'P':
             astr = "BadPIN"
+        elif action == 'O':
+            astr = "Opened"
+        elif action == 'C':
+            astr = "Closed"
         else:
             astr = "Unknown"
 
