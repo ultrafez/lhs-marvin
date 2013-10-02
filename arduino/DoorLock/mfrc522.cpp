@@ -1,3 +1,5 @@
+#include <Arduino.h>
+#include "pinmap.h"
 #include <SPI.h>
 
 #define	uchar	unsigned char
@@ -5,11 +7,6 @@
 
 //数组最大长度
 #define MAX_LEN 16
-
-// Pin 9 also used by keypad
-const int chipSelectPin = 9;
-#define NRSTPD 8
-
 
 //MF522命令字
 #define PCD_IDLE              0x00               //NO action;取消当前命令
@@ -115,12 +112,12 @@ const int chipSelectPin = 9;
 
 static void Write_MFRC522(uchar addr, uchar val)
 {
-	digitalWrite(chipSelectPin, LOW);
+	digitalWrite(RFID_CS_PIN, LOW);
 
 	SPI.transfer((addr<<1)&0x7E);	
 	SPI.transfer(val);
 	
-	digitalWrite(chipSelectPin, HIGH);
+	digitalWrite(RFID_CS_PIN, HIGH);
 }
 
 
@@ -128,13 +125,13 @@ static uchar Read_MFRC522(uchar addr)
 {
 	uchar val;
 
-	digitalWrite(chipSelectPin, LOW);
+	digitalWrite(RFID_CS_PIN, LOW);
 
 	//地址格式：1XXXXXX0
 	SPI.transfer(((addr<<1)&0x7E) | 0x80);	
 	val =SPI.transfer(0x00);
 	
-	digitalWrite(chipSelectPin, HIGH);
+	digitalWrite(RFID_CS_PIN, HIGH);
 	
 	return val;	
 }
@@ -185,8 +182,8 @@ MFRC522_Config(void)
     if (NRSTPD != -1)
 	digitalWrite(NRSTPD,HIGH);
 
-    pinMode(chipSelectPin, OUTPUT);
-    digitalWrite(chipSelectPin, HIGH);
+    pinMode(RFID_CS_PIN, OUTPUT);
+    digitalWrite(RFID_CS_PIN, HIGH);
 
     MFRC522_Reset();
 	 	
@@ -216,7 +213,7 @@ MFRC522_Init(void)
       digitalWrite(NRSTPD, LOW);
     }
 
-    SPI.setClockDivider(SPI_CLOCK_DIV2);
+    SPI.setClockDivider(SPI_CLOCK_DIV8);
     SPI.begin();
 }
 

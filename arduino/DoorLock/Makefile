@@ -1,5 +1,5 @@
 
-ARDUINO_LIBS = SoftwareSerial EEPROM SPI
+ARDUINO_LIBS = EEPROM SPI Wire
 ARDUINO_PORT = /dev/ttyACM0
 
 ifeq (1, 1)

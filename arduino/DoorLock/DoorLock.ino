@@ -3,6 +3,7 @@
  */
 #include <EEPROM.h>
 #include <util/crc16.h>
+#include "pinmap.h"
 
 #define RFID_522 1
 
@@ -16,33 +17,14 @@
 
 #define EEPROM_TAG_START 64
 #define EEPROM_TAG_END 1023
-#define UNLOCK_PERIOD 5000
 #define DEBOUNCE_INTERVAL 100
+#define GREEN_PERIOD 5000
+#define QUICKLOCK_INTERVAL 1000
 
-#define PIN_INTERVAL 5000
+#define PIN_INTERVAL 10000
 #define FAIL_INTERVAL 2000
 
 #define RFID_SCAN_INTERVAL 500
-
-#define LED_R_PIN 7
-#define LED_G_PIN 6
-#define LED_B_PIN 5
-#define LED_ON 1
-#define LED_OFF 0
-
-// Internal release button
-#define RELEASE_PIN 3
-
-#define STATUS_PIN 4
-
-#define LOCK_PIN 2
-#define LOCK_OFF 0
-#define LOCK_ON 1
-
-// Blinkenlight
-#define STATUS_PIN 4
-#define STATUS_OFF 1
-#define STATUS_ON 0
 
 // These will be inverted when no ping is seen for a while
 #define STATUS_ON_PERIOD 2000
@@ -51,9 +33,17 @@
 static bool status_lit;
 static unsigned long status_timeout;
 
+#ifdef SENSE_PIN
+#define SENSE_DEBOUNCE_INTERVAL 1000
+static bool sense_open;
+static unsigned long sense_debounce;
+#endif
+
 // Pin 9 is also used by the RFID module
-static const uint8_t kp_row_pin[4] = {9, A0, A1, A2};
-static const uint8_t kp_col_pin[3] = {A3, A4, A5};
+static const uint8_t kp_row_pin[4] = KP_ROW;
+static const uint8_t kp_col_pin[3] = KP_COL;
+
+static bool seen_event;
 
 #ifdef RFID_SERIAL
 #define RFID_RX 2
@@ -80,6 +70,8 @@ static int ping_ticks;
 
 #define MAX_TAG_LEN 20
 unsigned long relock_time;
+static unsigned long quicklock_time;
+unsigned long green_time;
 unsigned long fail_timeout;
 static char last_tag[MAX_TAG_LEN + 1];
 static char last_pin[MAX_TAG_LEN + 1];
@@ -92,7 +84,7 @@ static uint8_t msg_buf[MAX_MSG_SIZE];
 static int msg_buf_len;
 
 // Must be a power of two
-#define LOG_BUF_SIZE 1024
+#define LOG_BUF_SIZE 256
 uint8_t log_buf[LOG_BUF_SIZE];
 // Bytes not sent to host
 static int log_tail;
@@ -446,16 +438,22 @@ static void
 log_tag(char action)
 {
   const char *p = last_tag;
-  uint8_t buf[2];
 
   log_push_time();
   log_push(action);
   while (*p)
     log_push(*(p++));
   log_push(0);
-  buf[0] = MSG_EVENT;
-  buf[1] = my_addr;
-  send_packet(buf, 2);
+  seen_event = true;
+}
+
+static void
+log_notag(char action)
+{
+  log_push_time();
+  log_push(action);
+  log_push(0);
+  seen_event = true;
 }
 
 /* Returns -1 if not found.  */
@@ -546,11 +544,12 @@ unlock_door(void)
 
   old_time = relock_time;
   relock_time = now_plus(UNLOCK_PERIOD);
+  green_time = now_plus(GREEN_PERIOD);
 
   if (old_time)
     return;
 
-  log_tag('O');
+  log_tag('U');
 
   digitalWrite(LOCK_PIN, LOCK_ON);
 }
@@ -559,6 +558,7 @@ static void
 lock_door(void)
 {
   relock_time = 0;
+  quicklock_time = 0;
   last_tag[0] = 0;
   digitalWrite(LOCK_PIN, LOCK_OFF);
 }
@@ -741,7 +741,7 @@ do_serial(void)
 {
   char c;
 
-  if (comSerial.available())
+  while (comSerial.available())
     {
       c = comSerial.read();
       if (is_terminator(c))
@@ -755,6 +755,15 @@ do_serial(void)
 	}
       else
 	msg_buf[msg_buf_len++] = c;
+    }
+  if (seen_event)
+    {
+      uint8_t buf[2];
+
+      buf[0] = MSG_EVENT;
+      buf[1] = my_addr;
+      send_packet(buf, 2);
+      seen_event = false;
     }
 }
 
@@ -834,7 +843,7 @@ do_rfid(void)
 
   next_scan = now_plus(RFID_SCAN_INTERVAL);
 
-  if (relock_time)
+  if (relock_time || green_time)
     return;
 
   uid_len = MFRC522_GetID(uid);
@@ -860,8 +869,11 @@ do_rfid(void)
 static void
 do_timer(void)
 {
-  if (time_after(relock_time))
+  if (time_after(relock_time) || time_after(quicklock_time))
     lock_door();
+
+  if (time_after(green_time))
+    green_time = 0;
 
   if (time_after(pin_timeout))
     {
@@ -987,18 +999,37 @@ do_keypad(void)
 static void
 do_buttons(void)
 {
+#ifdef SENSE_PIN
+  if (time_after(sense_debounce))
+    sense_debounce = 0;
+  if (!sense_debounce) {
+      bool old_sense;
+
+      old_sense = sense_open;
+      sense_open = digitalRead(SENSE_PIN) == 0;
+      if (sense_open != old_sense) {
+	  sense_debounce = now_plus(SENSE_DEBOUNCE_INTERVAL);
+	  if (sense_open && relock_time && quicklock_time == 0) {
+	      quicklock_time = now_plus(QUICKLOCK_INTERVAL);
+	  }
+	  log_notag(sense_open ? 'O' : 'C');
+      }
+  }
+#endif
+#ifdef RELEASE_PIN
   if (!digitalRead(RELEASE_PIN))
     {
       strcpy(last_tag, "MAGIC");
       unlock_door();
     }
+#endif
 }
 
 static void
 do_leds(void)
 {
   digitalWrite(LED_R_PIN, fail_timeout ? LED_ON : LED_OFF);
-  digitalWrite(LED_G_PIN, relock_time ? LED_ON : LED_OFF);
+  digitalWrite(LED_G_PIN, green_time ? LED_ON : LED_OFF);
   digitalWrite(LED_B_PIN, pin_timeout ? LED_ON : LED_OFF);
 }
 
@@ -1007,7 +1038,12 @@ void loop()
 {
   comSerial.println("#Hello");
 
+#ifdef RELEASE_PIN
   pinMode(RELEASE_PIN, INPUT_PULLUP);
+#endif
+#ifdef SENSE_PIN
+  pinMode(SENSE_PIN, INPUT_PULLUP);
+#endif
   init_rfid();
   last_time_tick = millis();
   pinMode(LOCK_PIN, OUTPUT);
@@ -1018,7 +1054,7 @@ void loop()
   pinMode(LED_R_PIN, OUTPUT);
   digitalWrite(LED_R_PIN, LED_OFF);
   pinMode(LED_G_PIN, OUTPUT);
-  digitalWrite(LED_G_PIN, LED_OFF);
+  digitalWrite(LED_G_PIN, LED_ON);
   pinMode(LED_B_PIN, OUTPUT);
   digitalWrite(LED_B_PIN, LED_OFF);
 
