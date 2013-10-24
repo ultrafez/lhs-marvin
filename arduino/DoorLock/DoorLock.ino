@@ -300,6 +300,7 @@ hex_char(uint8_t val)
     return 'A' + val - 10;
 }
 
+#if 0
 static uint8_t
 from_hex(char c)
 {
@@ -311,6 +312,7 @@ from_hex(char c)
     return c - 'a';
   return 0;
 }
+#endif
 
 static void
 write_hex8(char *buf, uint8_t val)
@@ -846,7 +848,7 @@ do_rfid(void)
   if (relock_time || green_time)
     return;
 
-  uid_len = MFRC522_GetID(uid);
+  uid_len = MFRC522_GetID(uid, RFID1_RST_PIN, RFID1_CS_PIN);
   if (uid_len > 0)
     {
       char *p = ascii_tag;
@@ -1038,6 +1040,9 @@ void loop()
 {
   comSerial.println("#Hello");
 
+  pinMode(RFID1_RST_PIN, OUTPUT);
+  digitalWrite(RFID1_RST_PIN, LOW);
+
 #ifdef RELEASE_PIN
   pinMode(RELEASE_PIN, INPUT_PULLUP);
 #endif
@@ -1049,7 +1054,7 @@ void loop()
   pinMode(LOCK_PIN, OUTPUT);
   digitalWrite(LOCK_PIN, LOCK_OFF);
   pinMode(STATUS_PIN, OUTPUT);
-  digitalWrite(STATUS_PIN, STATUS_OFF);
+  digitalWrite(STATUS_PIN, STATUS_ON);
 
   pinMode(LED_R_PIN, OUTPUT);
   digitalWrite(LED_R_PIN, LED_OFF);

@@ -110,14 +110,16 @@
 #define     Reserved34			  0x3F
 //-----------------------------------------------
 
+static uint8_t cs_pin;
+
 static void Write_MFRC522(uchar addr, uchar val)
 {
-	digitalWrite(RFID_CS_PIN, LOW);
+	digitalWrite(cs_pin, LOW);
 
 	SPI.transfer((addr<<1)&0x7E);	
 	SPI.transfer(val);
 	
-	digitalWrite(RFID_CS_PIN, HIGH);
+	digitalWrite(cs_pin, HIGH);
 }
 
 
@@ -125,13 +127,13 @@ static uchar Read_MFRC522(uchar addr)
 {
 	uchar val;
 
-	digitalWrite(RFID_CS_PIN, LOW);
+	digitalWrite(cs_pin, LOW);
 
 	//地址格式：1XXXXXX0
 	SPI.transfer(((addr<<1)&0x7E) | 0x80);	
 	val =SPI.transfer(0x00);
 	
-	digitalWrite(RFID_CS_PIN, HIGH);
+	digitalWrite(cs_pin, HIGH);
 	
 	return val;	
 }
@@ -164,10 +166,12 @@ static void AntennaOn(void)
 }
 
 
+#if 0
 static void AntennaOff(void)
 {
 	ClearBitMask(TxControlReg, 0x03);
 }
+#endif
 
 
 static void MFRC522_Reset(void)
@@ -179,11 +183,8 @@ static void MFRC522_Reset(void)
 static void
 MFRC522_Config(void)
 {
-    if (NRSTPD != -1)
-	digitalWrite(NRSTPD,HIGH);
-
-    pinMode(RFID_CS_PIN, OUTPUT);
-    digitalWrite(RFID_CS_PIN, HIGH);
+    pinMode(cs_pin, OUTPUT);
+    digitalWrite(cs_pin, HIGH);
 
     MFRC522_Reset();
 	 	
@@ -207,12 +208,6 @@ MFRC522_Config(void)
 void
 MFRC522_Init(void)
 {
-  if (NRSTPD != -1)
-    {
-      pinMode(NRSTPD,OUTPUT);
-      digitalWrite(NRSTPD, LOW);
-    }
-
     SPI.setClockDivider(SPI_CLOCK_DIV8);
     SPI.begin();
 }
@@ -465,10 +460,13 @@ static void MFRC522_Halt(void)
 
 /* Returns length of id, or 0 if no tag present.  */
 int
-MFRC522_GetID(uint8_t *uid)
+MFRC522_GetID(uint8_t *uid, uint8_t reset_pin, uint8_t cs)
 {
   uint8_t status;
   int len = 0;
+
+  cs_pin = cs;
+  digitalWrite(reset_pin,HIGH);
 
   MFRC522_Config();
 
@@ -484,6 +482,6 @@ MFRC522_GetID(uint8_t *uid)
   MFRC522_Halt();
 
 done:
-  digitalWrite(NRSTPD, LOW);
+  digitalWrite(reset_pin, LOW);
   return len;
 }
