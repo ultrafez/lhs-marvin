@@ -5,15 +5,7 @@
 #include <util/crc16.h>
 #include "pinmap.h"
 
-#define RFID_522 1
-
-#if defined(RFID_SERIAL)
-#include <SoftwareSerial.h> 
-#elif defined(RFID_532)
-#include <Adafruit_NFCShield_I2C.h>
-#elif defined(RFID_522)
 #include "mfrc522.h"
-#endif
 
 #define EEPROM_TAG_START 64
 #define EEPROM_TAG_END 1023
@@ -50,21 +42,6 @@ static const uint8_t kp_row_pin[4] = KP_ROW;
 static const uint8_t kp_col_pin[3] = KP_COL;
 
 static bool seen_event;
-
-#ifdef RFID_SERIAL
-#define RFID_RX 2
-#define RFID_TX 3
-
-SoftwareSerial rfidSerial(RFID_RX, RFID_TX);
-
-#elif defined(RFID_532)
-#define NFC_IRQ   (4)
-
-Adafruit_NFCShield_I2C nfc(A3, A2);
-#elif defined(RFID_522)
-
-#else
-#endif
 
 #define comSerial Serial
 
@@ -248,34 +225,11 @@ enum {
     MSG_KEY_HASH = 'H',
 };
 
-#if defined(RFID_SERIAL)
-static void
-init_rfid(void)
-{
-  rfidSerial.begin(9600);
-}
-#elif defined(RFID_532)
-static void
-init_rfid(void)
-{
-  uint32_t ver;
-
-  nfc.begin();
-  ver = nfc.getFirmwareVersion();
-  if (!ver)
-    die();
-
-  nfc.setPassiveActivationRetries(0x01);
-  nfc.SAMConfig();
-}
-#elif defined(RFID_522)
 static void
 init_rfid(void)
 {
   MFRC522_Init();
 }
-#else
-#endif
 
 // the setup routine runs once when you press reset:
 void setup()
@@ -781,68 +735,6 @@ do_serial(void)
     }
 }
 
-#if defined(RFID_SERIAL)
-static void
-do_rfid(void)
-{
-  static char tag[MAX_TAG_LEN + 1];
-  static int tag_len = -1;
-  char c;
-
-  if (!rfidSerial.available())
-    return;
-  c = rfidSerial.read();
-  if (c == 2)
-    {
-      tag_len = 0;
-    }
-  else if (tag_len >= 0)
-    {
-      if (c == 3)
-	{
-	  tag[tag_len] = 0;
-	  unlock_door(tag);
-	  tag_len = -1;
-	}
-      else if (tag_len >= MAX_TAG_LEN)
-	{
-	  tag_len = -1;
-	}
-      else
-	{
-	  tag[tag_len++] = c;
-	}
-    }
-}
-#elif defined(RFID_532)
-static void
-do_rfid(void)
-{
-  boolean success;
-  uint8_t uid[7];
-  uint8_t uid_len;
-  char ascii_tag[15];
-  int i;
-  static unsigned long next_scan;
-
-  if (next_scan && !time_after(next_scan))
-    return;
-
-  next_scan = now_plus(RFID_SCAN_INTERVAL);
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uid_len);
-  if (success)
-    {
-      char *p = ascii_tag;
-      for (i = 0; i < uid_len; i++)
-	{
-	  write_hex8(p, uid[i]);
-	  p += 2;
-	}
-      *p = 0;
-      unlock_door(ascii_tag);
-    }
-}
-#elif defined(RFID_522)
 static void
 do_rfid(void)
 {
@@ -873,12 +765,6 @@ do_rfid(void)
       tag_scanned(ascii_tag);
     }
 }
-#else
-static void
-do_rfid(void)
-{
-}
-#endif
 
 static void
 do_timer(void)
