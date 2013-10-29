@@ -30,6 +30,10 @@
 #define RFID2_CS_PIN GPA(7)
 #define RFID2_RST_PIN GPA(1)
 
+#define SCANOUT_LED_PIN GPA(4)
+#define SCANOUT_LED_ON 0
+#define SCANOUT_LED_OFF 1
+
 #define SENSE_PIN 3
 
 #define BUTTON_PIN GPA(0)

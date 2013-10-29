@@ -25,6 +25,11 @@
 static bool status_lit;
 static unsigned long status_timeout;
 
+#ifdef RFID2_CS_PIN
+#define SCANOUT_INTERVAL 2000
+static unsigned long scanout_time;
+#endif
+
 #ifdef SENSE_PIN
 #define SENSE_DEBOUNCE_INTERVAL 1000
 static bool sense_open;
@@ -198,6 +203,7 @@ uint8_t my_addr = '?';
 	  'O': Door opened
 	  'C': Door closed
 	  'B': Button pressed
+	  'T': Tag scanned out
 	Data: Log entry, or empty if there are no remaining log entries.
 
       MSG_ACK
@@ -475,6 +481,22 @@ find_tag(const char *tag, char *pin)
     }
 }
 
+#ifdef RFID2_CS_PIN
+static void
+tag_scanout(const char *tag)
+{
+  if (find_tag(tag, last_pin) == -1)
+    return;
+
+  if (pin_timeout || scanout_time)
+    return;
+
+  strcpy(last_tag, tag);
+  log_tag('T');
+  scanout_time = now_plus(SCANOUT_INTERVAL);
+}
+#endif
+
 static void
 tag_scanned(const char *tag)
 {
@@ -749,7 +771,7 @@ do_rfid(void)
 
   next_scan = now_plus(RFID_SCAN_INTERVAL);
 
-  if (relock_time || green_time)
+  if (relock_time || green_time || scanout_time)
     return;
 
   uid_len = MFRC522_GetID(uid, RFID1_RST_PIN, RFID1_CS_PIN);
@@ -763,7 +785,27 @@ do_rfid(void)
 	}
       *p = 0;
       tag_scanned(ascii_tag);
+      return;
     }
+
+#ifdef RFID2_CS_PIN
+  if (is_alive())
+    {
+      uid_len = MFRC522_GetID(uid, RFID2_RST_PIN, RFID2_CS_PIN);
+      if (uid_len > 0)
+	{
+	  char *p = ascii_tag;
+	  for (i = 0; i < uid_len; i++)
+	    {
+	      write_hex8(p, uid[i]);
+	      p += 2;
+	    }
+	  *p = 0;
+	  tag_scanout(ascii_tag);
+	  return;
+	}
+    }
+#endif
 }
 
 static void
@@ -774,6 +816,9 @@ do_timer(void)
 
   if (time_after(green_time))
     green_time = 0;
+
+  if (time_after(scanout_time))
+    scanout_time = 0;
 
   if (time_after(pin_timeout))
     {
@@ -950,9 +995,12 @@ do_buttons(void)
 static void
 do_leds(void)
 {
-  digitalWrite(LED_R_PIN, fail_timeout ? LED_ON : LED_OFF);
+  digitalWrite(LED_R_PIN, fail_timeout || scanout_time ? LED_ON : LED_OFF);
   digitalWrite(LED_G_PIN, green_time ? LED_ON : LED_OFF);
-  digitalWrite(LED_B_PIN, pin_timeout ? LED_ON : LED_OFF);
+  digitalWrite(LED_B_PIN, pin_timeout || scanout_time ? LED_ON : LED_OFF);
+#ifdef SCANOUT_LED_PIN
+  digitalWrite(SCANOUT_LED_PIN, scanout_time ? SCANOUT_LED_ON : SCANOUT_LED_OFF);
+#endif
 }
 
 // the loop routine runs over and over again forever:
@@ -962,6 +1010,11 @@ void loop()
 
   pinMode(RFID1_RST_PIN, OUTPUT);
   digitalWrite(RFID1_RST_PIN, LOW);
+
+#ifdef RFID2_CS_PIN
+  pinMode(RFID2_RST_PIN, OUTPUT);
+  digitalWrite(RFID2_RST_PIN, LOW);
+#endif
 
 #ifdef RELEASE_PIN
   pinMode(RELEASE_PIN, INPUT_PULLUP);
@@ -985,6 +1038,11 @@ void loop()
   digitalWrite(LED_G_PIN, LED_ON);
   pinMode(LED_B_PIN, OUTPUT);
   digitalWrite(LED_B_PIN, LED_OFF);
+
+#ifdef SCANOUT_LED_PIN
+  pinMode(SCANOUT_LED_PIN, OUTPUT);
+  digitalWrite(SCANOUT_LED_PIN, SCANOUT_LED_OFF);
+#endif
 
   while (1)
     {
