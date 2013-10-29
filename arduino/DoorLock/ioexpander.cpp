@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "ioexpander.h"
+#include "pinmap.h"
 
 #define MCP23_I2C_ADDR 0x20
 
@@ -40,6 +41,13 @@ remote_pins_init(void)
 {
   Wire.begin();
   remote_iodir = 0xffff;
+#ifdef REMOTE_IO_RST_PIN
+  pinMode(REMOTE_IO_RST_PIN, OUTPUT);
+  digitalWrite(REMOTE_IO_RST_PIN, LOW);
+  delay(1);
+  digitalWrite(REMOTE_IO_RST_PIN, HIGH);
+  delay(1);
+#endif
   // FIXME: Should read current state from IO expander.
   done_i2c_init = true;
 }

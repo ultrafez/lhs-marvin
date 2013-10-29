@@ -45,13 +45,15 @@
 #define STATUS_OFF 1
 #define STATUS_ON 0
 
+#define REMOTE_IO_RST_PIN A3
+
 #endif /* UPSTAIRS */
 
 
 #ifdef DOWNSTAIRS
 
 /* downstairs keypad link cable pinout:
-    GND-1 8-
+    GND-1 8-RST
     3v3-2 7-MOSI
     SDA-3 6-MISO
     SCL-4 5-SCK */
@@ -75,6 +77,8 @@
 #define STATUS_PIN 4
 #define STATUS_OFF 1
 #define STATUS_ON 0
+
+#define REMOTE_IO_RST_PIN A3
 
 #endif /* DOWNSTAIRS */
 
