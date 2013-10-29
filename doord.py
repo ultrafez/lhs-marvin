@@ -243,7 +243,7 @@ class DoorMonitor(KillableThread):
         while True:
             r = self.ser.readline()
             if r == "":
-                raise Exception("No response from target")
+                raise Exception("No response from %s" % self.port_name)
             dbg("Response: %s" % r[:-1])
             if len(r) < 5:
                 continue
