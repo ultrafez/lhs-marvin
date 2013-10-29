@@ -326,6 +326,8 @@ class DoorMonitor(KillableThread):
             astr = "Opened"
         elif action == 'C':
             astr = "Closed"
+        elif action == 'B':
+            astr = "Button"
         else:
             astr = "Unknown"
 

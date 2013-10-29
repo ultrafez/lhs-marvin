@@ -27,7 +27,12 @@
 #define RFID1_CS_PIN 9
 #define RFID1_RST_PIN 8
 
+#define RFID2_CS_PIN GPA(7)
+#define RFID2_RST_PIN GPA(1)
+
 #define SENSE_PIN 3
+
+#define BUTTON_PIN GPA(0)
 
 #define UNLOCK_PERIOD 10000
 

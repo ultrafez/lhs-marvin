@@ -39,6 +39,12 @@ static bool sense_open;
 static unsigned long sense_debounce;
 #endif
 
+#ifdef BUTTON_PIN
+#define BUTTON_DEBOUNCE_INTERVAL 1000
+static bool button_state;
+static unsigned long button_debounce;
+#endif
+
 // Pin 9 is also used by the RFID module
 static const uint8_t kp_row_pin[4] = KP_ROW;
 static const uint8_t kp_col_pin[3] = KP_COL;
@@ -67,6 +73,8 @@ static uint32_t last_time_tick;
 
 #define PING_TIMEOUT 90
 static int ping_ticks;
+
+#define is_alive() (ping_ticks != 0)
 
 #define MAX_TAG_LEN 20
 unsigned long relock_time;
@@ -204,11 +212,15 @@ uint8_t my_addr = '?';
       MSG_LOG_VALUE
 	The contents of the first log entry.  This must be explicitly
        	cleared with MSG_LOG_CLEAR before the next entry can be accessed.
-	A log entry is a 6-byte timestamp, an event byte, and a tag ID.
+	A log entry is a 6-byte timestamp, an event byte, and (optinally)
+	a tag ID.
 	Event bytes are as follows:
 	  'R': Tag rejected
 	  'P': Incorrect pin entered for tag
-	  'O': Door opened by tag.
+	  'U': Door unocked by tag.
+	  'O': Door opened
+	  'C': Door closed
+	  'B': Button pressed
 	Data: Log entry, or empty if there are no remaining log entries.
 
       MSG_ACK
@@ -1025,6 +1037,28 @@ do_buttons(void)
       unlock_door();
     }
 #endif
+#ifdef BUTTON_PIN
+  if (time_after(button_debounce))
+    button_debounce = 0;
+  if (!button_debounce)
+    {
+      if (!digitalRead(BUTTON_PIN))
+	{
+	  if (!button_state)
+	    {
+	      sense_debounce = now_plus(SENSE_DEBOUNCE_INTERVAL);
+	      button_state = true;
+	      if (is_alive())
+		log_notag('B');
+	    }
+	}
+      else if (button_state)
+	{
+	  sense_debounce = now_plus(SENSE_DEBOUNCE_INTERVAL);
+	  button_state = false;
+	}
+    }
+#endif
 }
 
 static void
@@ -1048,6 +1082,9 @@ void loop()
 #endif
 #ifdef SENSE_PIN
   pinMode(SENSE_PIN, INPUT_PULLUP);
+#endif
+#ifdef BUTTON_PIN
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
 #endif
   init_rfid();
   last_time_tick = millis();
