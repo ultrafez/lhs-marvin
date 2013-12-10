@@ -979,7 +979,7 @@ do_buttons(void)
       bool old_sense;
 
       old_sense = sense_open;
-      sense_open = digitalRead(SENSE_PIN) == 0;
+      sense_open = digitalRead(SENSE_PIN) != 0;
       if (sense_open != old_sense) {
 	  sense_debounce = now_plus(SENSE_DEBOUNCE_INTERVAL);
 	  if (sense_open && relock_time && quicklock_time == 0) {
