@@ -206,6 +206,7 @@ uint8_t my_addr = '?';
 	  'C': Door closed
 	  'B': Button pressed
 	  'T': Tag scanned out
+	  'Q': Tag seen (pending PIN entry)
 	Data: Log entry, or empty if there are no remaining log entries.
 
       MSG_ACK
@@ -508,7 +509,7 @@ tag_scanned(const char *tag)
       pin_pos = NULL;
       pin_valid = false;
       pin_timeout = 0;
-      if (strcmp(last_tag, tag) != 0)
+      if (is_alive() || strcmp(last_tag, tag) != 0)
 	{
 	  /* Unrecognised tag.  */
 	  strcpy(last_tag, tag);
@@ -527,6 +528,9 @@ tag_scanned(const char *tag)
   strcpy(last_tag, tag);
   pin_pos = last_pin;
   pin_valid = true;
+
+  if (is_alive())
+    log_tag('Q');
 }
 
 static void
