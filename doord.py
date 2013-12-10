@@ -263,6 +263,7 @@ class DoorMonitor(KillableThread):
         self.remote_open = False
         self.sync = False
         self.rekey = False
+        self.last_door_state = None
         self.keys = []
         self.lock = threading.Lock()
 
@@ -305,7 +306,7 @@ class DoorMonitor(KillableThread):
     def resync(self):
         dbg("Resync")
         if self.ser is None:
-            self.ser = serial.Serial(self.port_name, 9600, timeout=SERIAL_POLL_PERIOD)
+            self.ser = serial.Serial("/dev/" + self.port_name, 9600, timeout=SERIAL_POLL_PERIOD)
             self.ser.write("X\n")
             # Wait for a 1s quiet period
             while self.ser.inWaiting():
@@ -338,6 +339,15 @@ class DoorMonitor(KillableThread):
         dbg("key hash %04X" % crc)
         return "%04X" % crc
 
+    def set_door_state(self, state):
+        if self.last_door_state != state:
+            try:
+                fh = open("/tmp/state." + self.port_name, 'wt')
+                fh.write("%d\n" % state)
+                fh.close()
+            except:
+                pass
+
     def handle_log(self, msg):
         t = decode_time(msg[0:6])
         action = msg[6]
@@ -351,8 +361,10 @@ class DoorMonitor(KillableThread):
             astr = "BadPIN"
         elif action == 'O':
             astr = "Opened"
+            self.set_door_state(1)
         elif action == 'C':
             astr = "Closed"
+            self.set_door_state(0)
         elif action == 'B':
             astr = "Button"
         elif action == 'T':
@@ -370,7 +382,7 @@ class DoorMonitor(KillableThread):
                 self.remote_open = True;
 
     def work(self):
-        dbg("Work %s" % self.port_name)
+        dbg("%s: Working" % self.port_name)
         try:
             if self.sync:
                 self.send_ping()
@@ -427,8 +439,8 @@ class Globals(object):
     def __init__(self, config):
         self.config = config
         self.dbt = DBThread(self)
-        self.door_up = DoorMonitor("/dev/door_up")
-        self.door_down = DoorMonitor("/dev/door_down")
+        self.door_up = DoorMonitor("door_up")
+        self.door_down = DoorMonitor("door_down")
         self.cond = threading.Condition()
         self.triggers = []
 

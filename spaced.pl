@@ -160,6 +160,12 @@ sub processpir
       chop $stuff;
       ($junk,$doors)=split(/\=/,$stuff);
       ($doorstate,$junk)=split(/,/,$doors);
+      if (open my $fh, '< /tmp/state.door_up') {
+            $doorstate = <$fh>;
+	    chomp $doorstate;
+	    print "F:".$doorstate."\n" if ($debug==1);
+            close $fh;
+      }
       if ($doorstate eq "1" && $lastdoorstate ne "1")
       {
             print "Door Opened\n" if ($debug==1);
