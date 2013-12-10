@@ -185,6 +185,11 @@ uint8_t my_addr = '?';
 	Data: None
 	Response: MSG_KEY_HASH
 
+      MSG_UNLOCK
+	Unlock the door.
+	Data: None
+	Response: MSG_ACK
+
     Device to host commands:
 
       MSG_EVENT
@@ -210,8 +215,8 @@ uint8_t my_addr = '?';
 	Data: Log entry, or empty if there are no remaining log entries.
 
       MSG_ACK
-	Indicate successful completion of MSG_LOG_CLEAR, MSG_KEY_RESET or
-	MSG_KEY_ADD command.
+	Indicate successful completion of MSG_LOG_CLEAR, MSG_KEY_RESET,
+	MSG_KEY_ADD or MSG_UNLOCK command.
 	Data: None
 
       MSG_KEY_HASH
@@ -228,6 +233,7 @@ enum {
     MSG_KEY_RESET = 'R',
     MSG_KEY_ADD = 'N',
     MSG_KEY_INFO = 'K',
+    MSG_UNLOCK = 'U',
     MSG_EVENT = 'E',
     MSG_ACK = 'A',
     MSG_LOG_VALUE = 'V',
@@ -659,6 +665,17 @@ key_info(void)
 }
 
 static void
+remote_unlock(void)
+{
+  pin_pos = NULL;
+  pin_valid = false;
+  pin_timeout = 0;
+  strcpy(last_tag, "REMOTE");
+  unlock_door();
+  send_ack();
+}
+
+static void
 process_msg(uint8_t *msg, int len)
 {
   if (msg[0] == MSG_SET_ADDRESS)
@@ -709,6 +726,9 @@ process_msg(uint8_t *msg, int len)
 	  if (len != 2)
 	    return;
 	  key_info();
+	  return;
+	case MSG_UNLOCK:
+	  remote_unlock();
 	  return;
 	default:
 	  break;
