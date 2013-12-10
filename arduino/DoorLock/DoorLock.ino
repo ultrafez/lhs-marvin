@@ -28,6 +28,8 @@ static unsigned long status_timeout;
 #ifdef RFID2_CS_PIN
 #define SCANOUT_INTERVAL 2000
 static unsigned long scanout_time;
+#else
+#define scanout_time 0ul
 #endif
 
 #ifdef SENSE_PIN
@@ -118,7 +120,7 @@ uint8_t my_addr = '?';
 
     Tag IDs are hex encoded, with a pair of hex characters for each ID byte.
 
-    Timestamps are base64 encoded unix time values. 6 characters encode a 
+    Timestamps are base64 encoded unix time values. 6 characters encode a
 
     Hex characters should be uppercase.
 
@@ -817,8 +819,10 @@ do_timer(void)
   if (time_after(green_time))
     green_time = 0;
 
+#ifdef RFID2_CS_PIN
   if (time_after(scanout_time))
     scanout_time = 0;
+#endif
 
   if (time_after(pin_timeout))
     {
