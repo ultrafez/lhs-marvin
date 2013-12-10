@@ -109,8 +109,9 @@ class DBThread(KillableThread):
                 k.append(t.tag_id + ' ' + t.pin)
         return k
     def _db_cursor(self):
-        self.db = MySQLdb.connect(host="localhost", user=self.db_user,
-                passwd=self.db_passwd, db="hackspace")
+        if self.db is None:
+            self.db = MySQLdb.connect(host="localhost", user=self.db_user,
+                    passwd=self.db_passwd, db="hackspace")
         return self.db.cursor();
     # Returns true if tag list has changed
     def update(self):
@@ -159,6 +160,31 @@ class DBThread(KillableThread):
             self._write_log(tstr, msg)
             self.lock.release()
         self.g.schedule(logfn)
+    def query_override(self, tag):
+        self.lock.acquire()
+        try:
+            cur = self._db_cursor()
+            cur.execute( \
+                "SELECT *" \
+                " FROM prefs " \
+                " WHERE ref='space-state' and value = 0;")
+            row = cur.fetchone()
+            if row is None:
+                return False
+
+            cur.execute( \
+                "SELECT people.member" \
+                " FROM people INNER JOIN rfid_tags" \
+                " ON (people.id = rfid_tags.user_id)" \
+                " WHERE (rfid_tags.card_id = '%s');" \
+                % tag)
+            row = cur.fetchone()
+            if row is None:
+                return False
+        finally:
+            self.lock.release()
+        return True
+
     def sync_keys(self):
         self.lock.acquire()
         try:
@@ -234,6 +260,7 @@ class DoorMonitor(KillableThread):
         self.port_name = port;
         self.ser = None
         self.seen_event = False
+        self.remote_open = False
         self.sync = False
         self.rekey = False
         self.keys = []
@@ -330,10 +357,17 @@ class DoorMonitor(KillableThread):
             astr = "Button"
         elif action == 'T':
             astr = "Scanout"
+        elif action == 'Q':
+            astr = "Query"
         else:
             astr = "Unknown"
 
         g.dbt.log(lt, "%s: %s %s" % (self.port_name, astr, tag))
+        if action == 'R' or action == 'Q':
+            # Allow all member tags if space is open
+            # FIXME: Ignore old events if catching up after a resync
+            if g.dbt.query_override(tag):
+                self.remote_open = True;
 
     def work(self):
         dbg("Work %s" % self.port_name)
@@ -352,6 +386,9 @@ class DoorMonitor(KillableThread):
                 dbg("Log event: %s" % r[2:])
                 self.handle_log(r[2:])
                 self.do_cmd_expect("C0", "A0", "Error clearing event log")
+                if self.remote_open:
+                    self.remote_open = False
+                    self.do_cmd_expect("U0", "A0", "Error doing remote open")
         except KeyboardInterrupt:
             # Propagate KeyboardInterrupt for thread termination
             raise
@@ -379,7 +416,7 @@ class DoorMonitor(KillableThread):
             except:
                 self.lock.release()
                 raise
-            timeout = 0
+            timeout = 0.0
             while (timeout < SERIAL_PING_INTERVAL) and not self.poll_event():
                 self.lock.release()
                 self.delay(SERIAL_POLL_PERIOD)
