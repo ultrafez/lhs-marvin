@@ -64,7 +64,7 @@
 #define LED_ON 0
 #define LED_OFF 1
 
-#define KP_ROW {GPA(7), GPA(6), GPA(2), GPA(1)}
+#define KP_ROW {GPA(7), GPA(6), GPA(1), GPA(2)}
 #define KP_COL {GPA(5), GPA(4), GPA(3)}
 
 #define RFID1_CS_PIN GPB(6)
