@@ -578,10 +578,9 @@ send_log_packet(void)
 {
   int i;
   char c;
-  uint8_t buf[MAX_TAG_LEN + 3];
 
-  buf[0] = MSG_LOG_VALUE;
-  buf[1] = my_addr;
+  msg_buf[0] = MSG_LOG_VALUE;
+  msg_buf[1] = my_addr;
   i = 2;
   log_tail = log_ack_tail;
   while (log_head != log_tail)
@@ -589,18 +588,17 @@ send_log_packet(void)
       c = log_pop();
       if (c == 0)
 	break;
-      buf[i++] = c;
+      msg_buf[i++] = c;
     }
-  send_packet(buf, i);
+  send_packet(msg_buf, i);
 }
 
 static void
 send_ack(void)
 {
-  uint8_t buf[5];
-  buf[0] = MSG_ACK;
-  buf[1] = my_addr;
-  send_packet(buf, 2);
+  msg_buf[0] = MSG_ACK;
+  msg_buf[1] = my_addr;
+  send_packet(msg_buf, 2);
 }
 
 static void
@@ -650,13 +648,12 @@ reset_keys(void)
 static void
 key_info(void)
 {
-  uint8_t buf[6];
   uint16_t crc;
   int offset;
   uint8_t val;
 
-  buf[0] = MSG_KEY_HASH;
-  buf[1] = my_addr;
+  msg_buf[0] = MSG_KEY_HASH;
+  msg_buf[1] = my_addr;
   crc = 0;
   offset = EEPROM_TAG_START;
   while (true)
@@ -667,9 +664,9 @@ key_info(void)
       crc = _crc_xmodem_update(crc, val);
       offset++;
     }
-  write_hex8((char *)buf + 2, crc >> 8);
-  write_hex8((char *)buf + 4, crc & 0xff);
-  send_packet(buf, 6);
+  write_hex8((char *)msg_buf + 2, crc >> 8);
+  write_hex8((char *)msg_buf + 4, crc & 0xff);
+  send_packet(msg_buf, 6);
 }
 
 static void
