@@ -15,6 +15,7 @@ import threading
 import daemon
 import optparse
 import os
+import datetime
 
 class PidFile(object):
     """Context manager that locks a pid file.  Implemented as class
@@ -172,15 +173,21 @@ class DBThread(KillableThread):
             if row is None:
                 return False
 
-            cur.execute( \
-                "SELECT people.member" \
-                " FROM people INNER JOIN rfid_tags" \
-                " ON (people.id = rfid_tags.user_id)" \
-                " WHERE (rfid_tags.card_id = '%s');" \
-                % tag)
-            row = cur.fetchone()
-            if row is None:
-                return False
+            if tag == '#':
+                # Magic hack for Tuesday open evenings.
+                now = datetime.datetime.now()
+                if (now.weekday() != 1) or (now.hour < 18):
+                    return False
+            else:
+                cur.execute( \
+                    "SELECT people.member" \
+                    " FROM people INNER JOIN rfid_tags" \
+                    " ON (people.id = rfid_tags.user_id)" \
+                    " WHERE (rfid_tags.card_id = '%s');" \
+                    % tag)
+                row = cur.fetchone()
+                if row is None:
+                    return False
         finally:
             self.lock.release()
         return True
@@ -265,34 +272,39 @@ class DoorMonitor(KillableThread):
         self.rekey = False
         self.last_door_state = None
         self.keys = []
+        self.seen_kp = None
         self.lock = threading.Lock()
 
     def read_response(self):
-        while True:
-            r = self.ser.readline()
-            if r == "":
-                raise Exception("No response from %s" % self.port_name)
-            dbg("Response: %s" % r[:-1])
-            if len(r) < 5:
-                continue
-            if r[0] == '#':
-                continue
-            crc = r[-5:-1]
-            r = r[:-5]
-            if crc != crc_str(r):
-                raise Exception("CRC mismatch (exp %s got %s)" % (crc, crc_str(r)))
-            if r[0] == 'E':
-                dbg("Seen event")
-                self.seen_event = True;
-                continue;
+        r = self.ser.readline()
+        if r == "":
+            raise Exception("No response from %s" % self.port_name)
+        dbg("Response: %s" % r[:-1])
+        if len(r) < 5:
+            return None
+        if r[0] == '#':
+            return None
+        crc = r[-5:-1]
+        r = r[:-5]
+        if crc != crc_str(r):
+            raise Exception("CRC mismatch (exp %s got %s)" % (crc, crc_str(r)))
+        if r[0] == 'E':
+            self.seen_event = True;
+        elif r[0] == 'Y':
+            self.seen_kp = r[2];
+        else:
             return r
+        return None
 
     def do_cmd(self, cmd):
         dbg("Sending %s" % cmd)
         self.ser.write(cmd)
         self.ser.write(crc_str(cmd))
         self.ser.write("\n")
-        return self.read_response()
+        r = None
+        while r is None:
+            r = self.read_response()
+        return r
 
     def do_cmd_expect(self, cmd, response, error):
         r = self.do_cmd(cmd)
@@ -329,7 +341,11 @@ class DoorMonitor(KillableThread):
     def poll_event(self):
         if not self.sync:
             return False
-        return self.rekey or self.ser.inWaiting();
+        while self.ser.inWaiting():
+            r = self.read_response()
+            if r is not None:
+                raise Exception("Unexpected spontaneous response");
+        return self.rekey or self.seen_event or self.seen_kp
 
     def key_hash(self):
         crc = 0
@@ -384,23 +400,29 @@ class DoorMonitor(KillableThread):
     def work(self):
         dbg("%s: Working" % self.port_name)
         try:
-            if self.sync:
-                self.send_ping()
-            else:
-                self.resync()
-            self.seen_event = False
-            while True:
-                r = self.do_cmd("G0")
-                if r[:2] != "V0":
-                    raise Exception("Failed to get event log")
-                if len(r) == 2:
-                    break
-                dbg("Log event: %s" % r[2:])
-                self.handle_log(r[2:])
-                self.do_cmd_expect("C0", "A0", "Error clearing event log")
-                if self.remote_open:
-                    self.remote_open = False
-                    self.do_cmd_expect("U0", "A0", "Error doing remote open")
+            if self.seen_event or not self.sync:
+                if self.sync:
+                    self.send_ping()
+                else:
+                    self.resync()
+                self.seen_event = False
+                while True:
+                    r = self.do_cmd("G0")
+                    if r[:2] != "V0":
+                        raise Exception("Failed to get event log")
+                    if len(r) == 2:
+                        break
+                    dbg("Log event: %s" % r[2:])
+                    self.handle_log(r[2:])
+                    self.do_cmd_expect("C0", "A0", "Error clearing event log")
+            if self.seen_kp is not None:
+                c = self.seen_kp
+                self.seen_kp = None
+                if (c == '#') and g.dbt.query_override(c):
+                    self.remote_open = True
+            if self.remote_open:
+                self.remote_open = False
+                self.do_cmd_expect("U0", "A0", "Error doing remote open")
         except KeyboardInterrupt:
             # Propagate KeyboardInterrupt for thread termination
             raise
@@ -429,11 +451,13 @@ class DoorMonitor(KillableThread):
                 self.lock.release()
                 raise
             timeout = 0.0
-            while (timeout < SERIAL_PING_INTERVAL) and not self.poll_event():
+            while not self.poll_event():
                 self.lock.release()
                 self.delay(SERIAL_POLL_PERIOD)
                 self.lock.acquire()
                 timeout += SERIAL_POLL_PERIOD
+                if timeout >= SERIAL_PING_INTERVAL:
+                        self.seen_event = True
 
 class Globals(object):
     def __init__(self, config):

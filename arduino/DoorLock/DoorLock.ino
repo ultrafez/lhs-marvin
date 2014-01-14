@@ -49,6 +49,7 @@ static const uint8_t kp_row_pin[4] = KP_ROW;
 static const uint8_t kp_col_pin[3] = KP_COL;
 
 static bool seen_event;
+static char seen_kp;
 
 #define comSerial Serial
 
@@ -198,6 +199,12 @@ uint8_t my_addr = '?';
 	(though not in the middle of a message)
 	Data: none
 
+      MSG_KEYPRESS
+	Indicates a keypad press.  Maybe be sent at any time,
+	including between recipt of a command and transmission of the response.
+	(though not in the middle of a message)
+	Data: none
+
       MSG_LOG_VALUE
 	The contents of the first log entry.  This must be explicitly
        	cleared with MSG_LOG_CLEAR before the next entry can be accessed.
@@ -235,6 +242,7 @@ enum {
     MSG_KEY_INFO = 'K',
     MSG_UNLOCK = 'U',
     MSG_EVENT = 'E',
+    MSG_KEYPRESS = 'Y',
     MSG_ACK = 'A',
     MSG_LOG_VALUE = 'V',
     MSG_KEY_HASH = 'H',
@@ -757,6 +765,7 @@ static void
 do_serial(void)
 {
   char c;
+  uint8_t buf[3];
 
   while (comSerial.available())
     {
@@ -775,12 +784,18 @@ do_serial(void)
     }
   if (seen_event)
     {
-      uint8_t buf[2];
-
       buf[0] = MSG_EVENT;
       buf[1] = my_addr;
       send_packet(buf, 2);
       seen_event = false;
+    }
+  if (seen_kp)
+    {
+      buf[0] = MSG_KEYPRESS;
+      buf[1] = my_addr;
+      buf[2] = seen_kp;
+      send_packet(buf, 3);
+      seen_kp = 0;
     }
 }
 
@@ -955,9 +970,8 @@ do_keypad(void)
   if (c == last_char)
     return;
 
-  Serial.print("#Key:");
-  Serial.println(c);
   last_char = c;
+  seen_kp = c;
   debounce_time = now;
 
   if (pin_pos)
