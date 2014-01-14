@@ -670,6 +670,7 @@ remote_unlock(void)
   pin_pos = NULL;
   pin_valid = false;
   pin_timeout = 0;
+  fail_timeout = 0;
   strcpy(last_tag, "REMOTE");
   unlock_door();
   send_ack();
