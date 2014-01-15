@@ -49,7 +49,7 @@ SERIAL_PING_INTERVAL = 60
 # Polling period is also serial read timeout
 SERIAL_POLL_PERIOD = 1
 
-DB_POLL_PERIOD = 10
+DB_POLL_PERIOD = 20
 
 class KillableThread(threading.Thread):
     def __init__(self):
@@ -340,7 +340,7 @@ class DoorMonitor(KillableThread):
 
     def poll_event(self):
         if not self.sync:
-            return False
+            return self.seen_event
         while self.ser.inWaiting():
             r = self.read_response()
             if r is not None:
@@ -399,41 +399,29 @@ class DoorMonitor(KillableThread):
 
     def work(self):
         dbg("%s: Working" % self.port_name)
-        try:
-            if self.seen_event or not self.sync:
-                if self.sync:
-                    self.send_ping()
-                else:
-                    self.resync()
-                self.seen_event = False
-                while True:
-                    r = self.do_cmd("G0")
-                    if r[:2] != "V0":
-                        raise Exception("Failed to get event log")
-                    if len(r) == 2:
-                        break
-                    dbg("Log event: %s" % r[2:])
-                    self.handle_log(r[2:])
-                    self.do_cmd_expect("C0", "A0", "Error clearing event log")
-            if self.seen_kp is not None:
-                c = self.seen_kp
-                self.seen_kp = None
-                if (c == '#') and g.dbt.query_override(c):
-                    self.remote_open = True
-            if self.remote_open:
-                self.remote_open = False
-                self.do_cmd_expect("U0", "A0", "Error doing remote open")
-        except KeyboardInterrupt:
-            # Propagate KeyboardInterrupt for thread termination
-            raise
-        except BaseException as e:
-            if self.ser is not None:
-                self.ser.close()
-            self.ser = None
-            self.sync = False
-            print e
-        except:
-            raise
+        if self.seen_event:
+            self.seen_event = False
+            if self.sync:
+                self.send_ping()
+            else:
+                self.resync()
+            while True:
+                r = self.do_cmd("G0")
+                if r[:2] != "V0":
+                    raise Exception("Failed to get event log")
+                if len(r) == 2:
+                    break
+                dbg("Log event: %s" % r[2:])
+                self.handle_log(r[2:])
+                self.do_cmd_expect("C0", "A0", "Error clearing event log")
+        if self.seen_kp is not None:
+            c = self.seen_kp
+            self.seen_kp = None
+            if (c == '#') and g.dbt.query_override(c):
+                self.remote_open = True
+        if self.remote_open:
+            self.remote_open = False
+            self.do_cmd_expect("U0", "A0", "Error doing remote open")
 
     def set_keys(self, keys):
         self.lock.acquire()
@@ -444,20 +432,36 @@ class DoorMonitor(KillableThread):
 
     def run(self):
         self.lock.acquire()
-        while True:
-            try:
-                self.work()
-            except:
+        self.seen_event = True
+        in_delay = False
+        try:
+            while True:
+                try:
+                    self.work()
+                    timeout = 0.0
+                    while not self.poll_event():
+                        self.lock.release()
+                        in_delay = True
+                        self.delay(SERIAL_POLL_PERIOD)
+                        self.lock.acquire()
+                        in_delay = False
+                        timeout += SERIAL_POLL_PERIOD
+                        if timeout >= SERIAL_PING_INTERVAL:
+                                self.seen_event = True
+                except KeyboardInterrupt:
+                    # Propagate KeyboardInterrupt for thread termination
+                    raise
+                except BaseException as e:
+                    if self.ser is not None:
+                        self.ser.close()
+                    self.ser = None
+                    self.sync = False
+                    print e
+                except:
+                    raise
+        finally:
+            if not in_delay:
                 self.lock.release()
-                raise
-            timeout = 0.0
-            while not self.poll_event():
-                self.lock.release()
-                self.delay(SERIAL_POLL_PERIOD)
-                self.lock.acquire()
-                timeout += SERIAL_POLL_PERIOD
-                if timeout >= SERIAL_PING_INTERVAL:
-                        self.seen_event = True
 
 class Globals(object):
     def __init__(self, config):
