@@ -80,6 +80,8 @@
 
 #define REMOTE_IO_RST_PIN A3
 
+#define SENSE_PIN 8
+
 #endif /* DOWNSTAIRS */
 
 
