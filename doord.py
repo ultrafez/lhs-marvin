@@ -161,7 +161,7 @@ class DBThread(KillableThread):
             self._write_log(tstr, msg)
             self.lock.release()
         self.g.schedule(logfn)
-    def query_override(self, tag):
+    def query_override(self, tag, match=""):
         self.lock.acquire()
         try:
             cur = self._db_cursor()
@@ -170,27 +170,52 @@ class DBThread(KillableThread):
                 " FROM prefs " \
                 " WHERE ref='space-state' and value = 0;")
             row = cur.fetchone()
-            if row is None:
-                return False
+            space_open = (row is not None)
 
-            if tag == '#':
+            if tag == '!#':
                 # Magic hack for Tuesday open evenings.
                 now = datetime.datetime.now()
-                if (now.weekday() != 1) or (now.hour < 18):
+                if (now.weekday() != 1) or (now.hour < 17):
                     return False
+                return space_open
+            if tag[0] == '!':
+                # OTP
+                t = int(time.time())
+                tstr = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
+                cur.execute( \
+                    "SELECT val" \
+                    " FROM otp_keys" \
+                    " where (expires > '%s');" \
+                    % tstr)
+                new_tstr = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t + 60 * 5))
+                for row in cur.fetchall():
+                    val = row[0]
+                    if len(val) < 6:
+                        continue
+                    dbg("Matching '%s'/'%s'" % (val, match))
+                    if val == match[-len(val):]:
+                        dbg("Matched OTP key %s" % val)
+                        cur.execute( \
+                            "UPDATE otp_keys" \
+                            " SET expires = '%s'" \
+                            " WHERE (val = '%s')" \
+                            % (new_tstr, val));
+                        return True
+                return False
             else:
                 cur.execute( \
                     "SELECT people.member" \
                     " FROM people INNER JOIN rfid_tags" \
                     " ON (people.id = rfid_tags.user_id)" \
-                    " WHERE (rfid_tags.card_id = '%s');" \
+                    " WHERE (rfid_tags.card_id = '%s' and people.member = 'YES');" \
                     % tag)
                 row = cur.fetchone()
                 if row is None:
                     return False
+                return space_open
         finally:
             self.lock.release()
-        return True
+        return False
 
     def sync_keys(self):
         self.lock.acquire()
@@ -273,6 +298,8 @@ class DoorMonitor(KillableThread):
         self.last_door_state = None
         self.keys = []
         self.seen_kp = None
+        self.otp = ''
+        self.otp_expires = None
         self.lock = threading.Lock()
 
     def read_response(self):
@@ -291,7 +318,10 @@ class DoorMonitor(KillableThread):
         if r[0] == 'E':
             self.seen_event = True;
         elif r[0] == 'Y':
-            self.seen_kp = r[2];
+            kp_char = r[2]
+            if self.seen_kp is None:
+                self.seen_kp = ''
+            self.seen_kp += kp_char
         else:
             return r
         return None
@@ -345,7 +375,7 @@ class DoorMonitor(KillableThread):
             r = self.read_response()
             if r is not None:
                 raise Exception("Unexpected spontaneous response");
-        return self.rekey or self.seen_event or self.seen_kp
+        return self.rekey or self.seen_event or (self.seen_kp is not None)
 
     def key_hash(self):
         crc = 0
@@ -417,11 +447,20 @@ class DoorMonitor(KillableThread):
         if self.seen_kp is not None:
             c = self.seen_kp
             self.seen_kp = None
-            if (c == '#') and g.dbt.query_override(c):
+            if c != '#':
+                c = self.otp + c;
+                self.otp = c
+                self.otp_expires = time.time() + 60
+            if g.dbt.query_override('!' + c, self.otp):
                 self.remote_open = True
         if self.remote_open:
             self.remote_open = False
             self.do_cmd_expect("U0", "A0", "Error doing remote open")
+        if self.otp_expires is not None:
+            if self.otp_expires < time.time():
+                dbg("OTP expired")
+                self.otp = ''
+                self.otp_expires = None
 
     def set_keys(self, keys):
         self.lock.acquire()
