@@ -16,6 +16,7 @@ import daemon
 import optparse
 import os
 import datetime
+import setproctitle
 
 class PidFile(object):
     """Context manager that locks a pid file.  Implemented as class
@@ -560,5 +561,6 @@ if do_debug:
     dc.stdout = sys.stdout
     dc.stderr = sys.stderr
 with dc:
+    setproctitle.setproctitle("doord")
     g = Globals(cfg)
     g.run()
