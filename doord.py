@@ -153,6 +153,22 @@ class DBThread(KillableThread):
         cur.execute( \
                 "INSERT INTO security (time, message)" \
                 " VALUES ('%s', '%s');" % (tstr, msg))
+
+    # Can be safely called from other threads
+    def update_space_state(self):
+        def updatefn():
+            self.lock.acquire()
+            try:
+                dbg("Running space state update");
+                try:
+                    script = self.g.config.get("scripts", "update_state")
+                    os.system(script)
+                finally:
+                    pass
+            finally:
+                self.lock.release()
+        self.g.schedule(updatefn)
+
     # Can be safely called from other threads
     def log(self, t, msg):
         tstr = time.strftime("%Y-%m-%d %H:%M:%S", t)
@@ -162,6 +178,43 @@ class DBThread(KillableThread):
             self._write_log(tstr, msg)
             self.lock.release()
         self.g.schedule(logfn)
+
+    # Can be safely called from other threads
+    def do_tag_in(self, tag):
+        self.lock.acquire()
+        try:
+            cur = self._db_cursor()
+            cur.execute( \
+                "INSERT INTO presence(system)" \
+                " SELECT id FROM systems" \
+                " WHERE mac = '%s' AND source='r';" \
+                % (tag))
+            cur.execute( \
+                "UPDATE (systems INNER JOIN rfid_tags" \
+                "  ON (systems.owner = rfid_tags.user_id))" \
+                " SET systems.hidden = 0" \
+                " WHERE rfid_tags.card_id = '%s' AND systems.hidden = 2;" \
+                % (tag))
+        finally:
+            self.lock.release()
+        self.update_space_state();
+
+    # Can be safely called from other threads
+    def do_tag_out(self, tag):
+        self.lock.acquire()
+        try:
+            cur = self._db_cursor()
+            cur.execute( \
+                "UPDATE (systems INNER JOIN rfid_tags" \
+                "  ON (systems.owner = rfid_tags.user_id))" \
+                " SET systems.hidden = 2" \
+                " WHERE rfid_tags.card_id = '%s' AND systems.hidden = 0;" \
+                % (tag))
+        finally:
+            self.lock.release()
+        self.update_space_state();
+
+    # Can be safely called from other threads
     def query_override(self, tag, match=""):
         self.lock.acquire()
         try:
@@ -388,12 +441,14 @@ class DoorMonitor(KillableThread):
 
     def set_door_state(self, state):
         if self.last_door_state != state:
+            self.last_door_state = state
             try:
                 fh = open("/tmp/state." + self.port_name, 'wt')
                 fh.write("%d\n" % state)
                 fh.close()
             except:
                 pass
+        g.dbt.update_space_state();
 
     def handle_log(self, msg):
         t = decode_time(msg[0:6])
@@ -403,6 +458,7 @@ class DoorMonitor(KillableThread):
         if action == 'R':
             astr = "Rejected"
         elif action == 'U':
+            g.dbt.do_tag_in(tag);
             astr = "Unlocked"
         elif action == 'P':
             astr = "BadPIN"
@@ -416,6 +472,7 @@ class DoorMonitor(KillableThread):
             astr = "Button"
         elif action == 'T':
             astr = "Scanout"
+            g.dbt.do_tag_out(tag);
         elif action == 'Q':
             astr = "Query"
         else:
@@ -426,6 +483,7 @@ class DoorMonitor(KillableThread):
             # Allow all member tags if space is open
             # FIXME: Ignore old events if catching up after a resync
             if g.dbt.query_override(tag):
+                g.dbt.do_tag_in(tag);
                 self.remote_open = True;
 
     def work(self):
