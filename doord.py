@@ -48,7 +48,7 @@ class PidFile(object):
 
 SERIAL_PING_INTERVAL = 60
 # Polling period is also serial read timeout
-SERIAL_POLL_PERIOD = 1
+SERIAL_POLL_PERIOD = 5
 
 DB_POLL_PERIOD = 20
 
@@ -355,11 +355,20 @@ class DoorMonitor(KillableThread):
         self.otp = ''
         self.otp_expires = None
         self.lock = threading.Lock()
+        self.current_response = ""
 
-    def read_response(self):
-        r = self.ser.readline()
-        if r == "":
-            raise Exception("No response from %s" % self.port_name)
+    def read_response(self, block):
+        c = ''
+        while c != '\n':
+            self.check_kill()
+            c = self.ser.read()
+            if c == "":
+                if block:
+                    raise Exception("No response from %s" % self.port_name)
+                return None
+            self.current_response += c
+        r = self.current_response
+        self.current_response = ""
         dbg("Response: %s" % r[:-1])
         if len(r) < 5:
             return None
@@ -387,7 +396,7 @@ class DoorMonitor(KillableThread):
         self.ser.write("\n")
         r = None
         while r is None:
-            r = self.read_response()
+            r = self.read_response(True)
         return r
 
     def do_cmd_expect(self, cmd, response, error):
@@ -425,10 +434,9 @@ class DoorMonitor(KillableThread):
     def poll_event(self):
         if not self.sync:
             return self.seen_event
-        while self.ser.inWaiting():
-            r = self.read_response()
-            if r is not None:
-                raise Exception("Unexpected spontaneous response");
+        r = self.read_response(False)
+        if r is not None:
+            raise Exception("Unexpected spontaneous response");
         return self.rekey or self.seen_event or (self.seen_kp is not None)
 
     def key_hash(self):
@@ -538,11 +546,6 @@ class DoorMonitor(KillableThread):
                     self.work()
                     timeout = 0.0
                     while not self.poll_event():
-                        self.lock.release()
-                        in_delay = True
-                        self.delay(SERIAL_POLL_PERIOD)
-                        self.lock.acquire()
-                        in_delay = False
                         timeout += SERIAL_POLL_PERIOD
                         if timeout >= SERIAL_PING_INTERVAL:
                                 self.seen_event = True
