@@ -28,6 +28,7 @@ char last;
 int count;
 Servo pan;
 int panangle=90;
+bool seen_ping;
 
 void Write (void) {
   pinMode(9, OUTPUT);     
@@ -166,7 +167,7 @@ void loop()
   if (Serial.available() > 0)
   {
     last=Serial.read();
-    if (last==0x0d)
+    if (last=='\n' || last == '\r')
     {
       input[count]=0;
       //Process string
@@ -219,8 +220,14 @@ void loop()
           FireLaser(10);
           break;
         case 'W': //Webcam
-          panangle=atoi(input+1);
-          pan.write(panangle);
+	  if (input[1] == 0) {
+	      Serial.print("ANGLE=");
+	      Serial.println(panangle);
+	  } else {
+	    panangle=atoi(input+1);
+	    pan.write(panangle);
+	    Serial.println("OK");
+	  }
           break;
         case 'Z': //Laser Scan
           pan.write(0);
@@ -255,6 +262,20 @@ void loop()
           break;
 	case 'S':
 	  digitalWrite(SIGN, (input[1] == '1') ? SIGN_ON : SIGN_OFF);
+	  Serial.println("OK");
+	  break;
+	case 'X':
+	  /* Ignore/reset.  */
+	  break;
+	case '?':
+	  if (input[1] == 0) {
+	    Serial.print("Marvin 1.5");
+	    if (!seen_ping) {
+	      Serial.print("+");
+	      seen_ping = true;
+	    }
+	    Serial.println();
+	  }
 	  break;
       };
       count=0;

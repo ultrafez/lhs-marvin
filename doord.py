@@ -54,6 +54,9 @@ DB_POLL_PERIOD = 20
 
 debug_lock = threading.Lock()
 
+port_door_map = {"door_up" : "internaldoor",
+        "door_down" : "externaldoor"};
+
 def dbg(msg):
     if do_debug:
         print msg
@@ -114,6 +117,9 @@ class DBThread(KillableThread):
         self.db_passwd = self.g.config.get("db", "password")
         self.db = None
         self.tags = []
+        self.door_state = {}
+        for k in port_door_map.values():
+            self.door_state[k] = False
         self.lock = threading.Lock()
 
     def _keylist(self, fn):
@@ -131,6 +137,7 @@ class DBThread(KillableThread):
     def update(self):
         changed = False
         try:
+            self.poll_space_open()
             cur = self._db_cursor()
             cur.execute( \
                 "SELECT rfid_tags.card_id, rfid_tags.pin, people.access" \
@@ -176,6 +183,7 @@ class DBThread(KillableThread):
                 try:
                     script = self.g.config.get("scripts", "update_state")
                     os.system(script)
+                    self.poll_space_open()
                 finally:
                     dbg("Done");
             finally:
@@ -227,24 +235,35 @@ class DBThread(KillableThread):
             self.lock.release()
         self.update_space_state();
 
+    def poll_space_open(self):
+        cur = self._db_cursor()
+        cur.execute( \
+            "SELECT *" \
+            " FROM prefs " \
+            " WHERE ref='space-state' and value = 0;")
+        row = cur.fetchone()
+        self.space_open_state = (row is not None)
+        self.g.aux.update()
+
+    # Can be safely called from other threads
+    def is_space_open(self):
+        self.lock.acquire()
+        is_open = self.space_open_state
+        self.lock.release()
+        return is_open
+
     # Can be safely called from other threads
     def query_override(self, tag, match=""):
         self.lock.acquire()
         try:
             cur = self._db_cursor()
-            cur.execute( \
-                "SELECT *" \
-                " FROM prefs " \
-                " WHERE ref='space-state' and value = 0;")
-            row = cur.fetchone()
-            space_open = (row is not None)
 
             if tag == '!#':
                 # Magic hack for Tuesday open evenings.
                 now = datetime.datetime.now()
                 if (now.weekday() != 1) or (now.hour < 17):
                     return False
-                return space_open
+                return self.space_open_state
             if tag[0] == '!':
                 # OTP
                 t = int(time.time())
@@ -276,10 +295,43 @@ class DBThread(KillableThread):
                 row = cur.fetchone()
                 if row is None:
                     return False
-                return space_open
+                return self.space_open_state
         finally:
             self.lock.release()
         return False
+
+    # Can be safely called from other threads
+    def record_temp(self, temp):
+        self.lock.acquire()
+        try:
+            dbg("Logging temperature %d" % temp)
+            cur = self._db_cursor()
+            cur.execute( \
+                "INSERT INTO environmental(temperature)" \
+                " VALUES (%d)" \
+                % (temp))
+        finally:
+            self.lock.release()
+
+    # Can be safely called from other threads
+    def set_door_state(self, port, state):
+        self.lock.acquire()
+        try:
+            door_name = port_door_map[port]
+            if self.door_state[door_name] != state:
+                if state:
+                    state_name = 'open'
+                else:
+                    state_name = 'closed'
+                cur = self._db_cursor()
+                cur.execute( \
+                    "REPLACE INTO prefs"\
+                    " VALUES ('%s','%s')" \
+                    % (door_name, state_name))
+                self.door_state[door_name] = state
+        finally:
+            self.lock.release()
+        g.dbt.update_space_state();
 
     def sync_keys(self):
         dbg("Triggering key sync");
@@ -344,6 +396,131 @@ def decode_time(s):
 
 def crc_str(s):
     return "%04X" % crc16.crc16xmodem(s)
+
+# Communicate with auxiliary arduino (sign, webcam)
+class AuxMonitor(KillableThread):
+    def __init__(self, g, port):
+        super(AuxMonitor, self).__init__()
+        self.port_name = port;
+        self.ser = None
+        self.servo_pos = None
+        self.next_temp_tick = None
+        self.g = g
+        self.cond = threading.Condition()
+
+    def dbg(self, msg):
+        dbg("%s: %s" % (self.port_name, msg))
+
+    def do_cmd(self, cmd):
+        self.dbg("Sending %s" % cmd);
+        self.ser.write(cmd + '\n')
+        r = self.ser.readline()
+        if (r is None):
+            raise Exception("No response from command '%s'", cmd)
+        r = r.rstrip()
+        self.dbg("Response %s" % r);
+        return r
+
+    def do_cmd_expect(self, cmd, response, error):
+        r = self.do_cmd(cmd)
+        if r != response:
+            raise Exception(error + ("'%s/%s'" %(r, response)))
+
+    def sync_sign(self):
+        new_sign = self.g.dbt.is_space_open()
+        if (self.last_sign is None) or (self.last_sign != new_sign):
+            self.last_sign = new_sign
+            if new_sign:
+                cmd = "S1"
+            else:
+                cmd = "S0"
+            self.do_cmd_expect(cmd, "OK", "Failed to set sign")
+
+    def sync_servo(self):
+        if self.last_servo == None:
+            r = self.do_cmd("W")
+            if r[:6] != "ANGLE=":
+                raise Exception("Bad servo response: %s" % r)
+            self.last_servo = int(r[6:])
+        if self.servo_pos is None:
+            self.servo_pos = self.last_servo
+        if self.last_servo != self.servo_pos:
+            self.do_cmd_expect("W%d" % self.servo_pos, "OK", "Failed to move servo")
+            self.last_servo = self.servo_pos;
+
+    def sync_temp(self):
+        now = time.time()
+        if (self.next_temp_tick is None) or (self.next_temp_tick < now):
+            if (self.next_temp_tick is None) or (self.next_temp_tick < now - 30):
+                self.next_temp_tick = now
+            self.next_temp_tick += 60
+            r = self.do_cmd("T")
+            if r[:5] != "TEMP=":
+                raise Exception("Bad temperature response")
+            self.g.dbt.record_temp(int(r[5:]))
+
+    def resync(self):
+        self.dbg("Full resync")
+        self.need_sync = True
+        self.last_sign = None
+        self.last_servo = None
+
+    def work(self):
+        self.resync()
+        while True:
+            self.check_kill()
+            r = self.do_cmd("?")
+            if r[:10] !=  "Marvin 1.5":
+                raise Exception("Marvin went AWOL")
+            if r[10:] == "+":
+                self.resync()
+            self.sync_sign()
+            self.sync_servo()
+            self.sync_temp()
+            self.need_sync = False
+            while (not self.need_sync) and (time.time() < self.next_temp_tick):
+                self.check_kill()
+                self.cond.wait(SERIAL_POLL_PERIOD)
+
+    def run(self):
+        while True:
+            try:
+                self.ser = serial.Serial("/dev/" + self.port_name, 9600, timeout=SERIAL_POLL_PERIOD, writeTimeout=SERIAL_POLL_PERIOD)
+                # Opening the port resets the arduino,
+                # which takes a few seconds to come back to life
+                self.delay(5);
+                self.ser.write("X\n")
+                # Wait for a 1s quiet period
+                while self.ser.inWaiting():
+                    while self.ser.inWaiting():
+                        self.ser.read(1)
+                    time.sleep(1)
+                try:
+                    self.cond.acquire()
+                    self.work()
+                finally:
+                    self.cond.release()
+            except KeyboardInterrupt:
+                # Propagate KeyboardInterrupt for thread termination
+                raise
+            except BaseException as e:
+                if self.ser is not None:
+                    self.ser.close()
+                print e
+            except:
+                raise
+            self.delay(SERIAL_PING_INTERVAL)
+
+    # Called from other threads
+    def update(self, servo=None):
+        def updatefn():
+            self.cond.acquire()
+            self.need_sync = True;
+            if servo is not None:
+                self.servo_pos = pos
+            self.cond.notify()
+            self.cond.release()
+        self.g.schedule(updatefn)
 
 # Communicate with door locks.
 # For Protocol details see DoorLock.ino
@@ -468,17 +645,6 @@ class DoorMonitor(KillableThread):
         self.dbg("key hash %04X" % crc)
         return "%04X" % crc
 
-    def set_door_state(self, state):
-        if self.last_door_state != state:
-            self.last_door_state = state
-            try:
-                fh = open("/tmp/state." + self.port_name, 'wt')
-                fh.write("%d\n" % state)
-                fh.close()
-            except:
-                pass
-        g.dbt.update_space_state();
-
     def handle_log(self, msg):
         t = decode_time(msg[0:6])
         action = msg[6]
@@ -493,10 +659,10 @@ class DoorMonitor(KillableThread):
             astr = "BadPIN"
         elif action == 'O':
             astr = "Opened"
-            self.set_door_state(1)
+            g.dbt.set_door_state(self.port_name, True)
         elif action == 'C':
             astr = "Closed"
-            self.set_door_state(0)
+            g.dbt.set_door_state(self.port_name, False)
         elif action == 'B':
             astr = "Button"
         elif action == 'T':
@@ -589,6 +755,7 @@ class Globals(object):
         self.dbt = DBThread(self)
         self.door_up = DoorMonitor("door_up")
         self.door_down = DoorMonitor("door_down")
+        self.aux = AuxMonitor(self, "arduino")
         self.cond = threading.Condition()
         self.triggers = []
 
@@ -609,6 +776,7 @@ class Globals(object):
         self.dbt.start()
         self.door_up.start()
         self.door_down.start()
+        self.aux.start()
         try:
             while True:
                 triggers = self.triggers
@@ -624,6 +792,7 @@ class Globals(object):
             self.door_up.kill()
             self.door_down.kill()
             self.dbt.kill()
+            self.aux.kill()
 
 
 op = optparse.OptionParser()
