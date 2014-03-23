@@ -52,6 +52,18 @@ SERIAL_POLL_PERIOD = 5
 
 DB_POLL_PERIOD = 20
 
+debug_lock = threading.Lock()
+
+def dbg(msg):
+    if do_debug:
+        print msg
+    debug_lock.acquire()
+    tstr = time.strftime("%Y-%m-%d %H:%M:%S")
+    log_fh = open("/var/log/doord.log", 'at')
+    log_fh.write("%s: %s\n" % (tstr, msg))
+    log_fh.close()
+    debug_lock.release()
+
 class KillableThread(threading.Thread):
     def __init__(self):
         super(KillableThread, self).__init__()
@@ -134,6 +146,7 @@ class DBThread(KillableThread):
                 t = Tag(row[0], row[1], row[2])
                 if not changed:
                     if (tag_num == len(self.tags)) or (self.tags[tag_num] != t):
+                        dbg("Tags changed");
                         changed = True
                         del self.tags[tag_num:]
                     else:
@@ -164,7 +177,7 @@ class DBThread(KillableThread):
                     script = self.g.config.get("scripts", "update_state")
                     os.system(script)
                 finally:
-                    pass
+                    dbg("Done");
             finally:
                 self.lock.release()
         self.g.schedule(updatefn)
@@ -235,13 +248,10 @@ class DBThread(KillableThread):
             if tag[0] == '!':
                 # OTP
                 t = int(time.time())
-                tstr = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
                 cur.execute( \
                     "SELECT val" \
                     " FROM otp_keys" \
-                    " where (expires > '%s');" \
-                    % tstr)
-                new_tstr = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t + 60 * 5))
+                    " where (expires > now());")
                 for row in cur.fetchall():
                     val = row[0]
                     if len(val) < 6:
@@ -251,9 +261,9 @@ class DBThread(KillableThread):
                         dbg("Matched OTP key %s" % val)
                         cur.execute( \
                             "UPDATE otp_keys" \
-                            " SET expires = '%s'" \
+                            " SET expires = now() + interval 10 minute" \
                             " WHERE (val = '%s')" \
-                            % (new_tstr, val));
+                            % val);
                         return True
                 return False
             else:
@@ -272,6 +282,7 @@ class DBThread(KillableThread):
         return False
 
     def sync_keys(self):
+        dbg("Triggering key sync");
         self.lock.acquire()
         try:
             self.g.door_up.set_keys(self._keylist(Tag.upstairs_ok))
@@ -287,10 +298,6 @@ class DBThread(KillableThread):
             finally:
                 self.lock.release()
             self.delay(DB_POLL_PERIOD)
-
-def dbg(msg):
-    if do_debug:
-        print msg
 
 def encode64(val):
     if val < 26:
@@ -348,7 +355,6 @@ class DoorMonitor(KillableThread):
         self.seen_event = False
         self.remote_open = False
         self.sync = False
-        self.rekey = False
         self.last_door_state = None
         self.keys = []
         self.seen_kp = None
@@ -357,11 +363,20 @@ class DoorMonitor(KillableThread):
         self.lock = threading.Lock()
         self.current_response = ""
 
+    def dbg(self, msg):
+        dbg("%s: %s" % (self.port_name, msg))
+
     def read_response(self, block):
         c = ''
         while c != '\n':
             self.check_kill()
-            c = self.ser.read()
+            if not block:
+                self.lock.release()
+            try:
+                c = self.ser.read()
+            finally:
+                if not block:
+                    self.lock.acquire()
             if c == "":
                 if block:
                     raise Exception("No response from %s" % self.port_name)
@@ -369,7 +384,7 @@ class DoorMonitor(KillableThread):
             self.current_response += c
         r = self.current_response
         self.current_response = ""
-        dbg("Response: %s" % r[:-1])
+        self.dbg("Response: %s" % r[:-1])
         if len(r) < 5:
             return None
         if r[0] == '#':
@@ -390,7 +405,7 @@ class DoorMonitor(KillableThread):
         return None
 
     def do_cmd(self, cmd):
-        dbg("Sending %s" % cmd)
+        self.dbg("Sending %s" % cmd)
         self.ser.write(cmd)
         self.ser.write(crc_str(cmd))
         self.ser.write("\n")
@@ -409,7 +424,7 @@ class DoorMonitor(KillableThread):
         self.do_cmd_expect("P0" + t, "P1" + t, "Machine does not go ping")
 
     def resync(self):
-        dbg("Resync")
+        self.dbg("Resync")
         if self.ser is None:
             self.ser = serial.Serial("/dev/" + self.port_name, 9600, timeout=SERIAL_POLL_PERIOD)
             self.ser.write("X\n")
@@ -424,27 +439,33 @@ class DoorMonitor(KillableThread):
         self.send_ping()
         r = self.do_cmd("K0")
         if r != "H0" + self.key_hash():
-            dbg("Uploading keys")
+            self.dbg("Uploading keys")
             self.do_cmd_expect("R0", "A0", "Device key reset failed")
             for key in self.keys:
                 self.do_cmd_expect("N0" + key, "A0", "Device not accepting keys")
         self.sync = True
-        self.rekey = False
 
     def poll_event(self):
         if not self.sync:
-            return self.seen_event
+            if self.seen_event:
+                return True;
+            self.lock.release()
+            try:
+                self.delay(SERIAL_POLL_PERIOD);
+            finally:
+                self.lock.acquire()
+            return False;
         r = self.read_response(False)
         if r is not None:
             raise Exception("Unexpected spontaneous response");
-        return self.rekey or self.seen_event or (self.seen_kp is not None)
+        return self.seen_event or (self.seen_kp is not None)
 
     def key_hash(self):
         crc = 0
         for key in self.keys:
             crc = crc16.crc16xmodem(key, crc)
             crc = crc16.crc16xmodem(chr(0), crc)
-        dbg("key hash %04X" % crc)
+        self.dbg("key hash %04X" % crc)
         return "%04X" % crc
 
     def set_door_state(self, state):
@@ -495,7 +516,7 @@ class DoorMonitor(KillableThread):
                 self.remote_open = True;
 
     def work(self):
-        dbg("%s: Working" % self.port_name)
+        self.dbg("Working")
         if self.seen_event:
             self.seen_event = False
             if self.sync:
@@ -508,7 +529,7 @@ class DoorMonitor(KillableThread):
                     raise Exception("Failed to get event log")
                 if len(r) == 2:
                     break
-                dbg("Log event: %s" % r[2:])
+                self.dbg("Log event: %s" % r[2:])
                 self.handle_log(r[2:])
                 self.do_cmd_expect("C0", "A0", "Error clearing event log")
         if self.seen_kp is not None:
@@ -525,7 +546,7 @@ class DoorMonitor(KillableThread):
             self.do_cmd_expect("U0", "A0", "Error doing remote open")
         if self.otp_expires is not None:
             if self.otp_expires < time.time():
-                dbg("OTP expired")
+                self.dbg("OTP expired")
                 self.otp = ''
                 self.otp_expires = None
 
@@ -533,35 +554,33 @@ class DoorMonitor(KillableThread):
         self.lock.acquire()
         self.keys = keys[:]
         self.sync = False
-        self.rekey = True
+        self.seen_event = True
         self.lock.release()
 
     def run(self):
-        self.lock.acquire()
         self.seen_event = True
         in_delay = False
-        try:
-            while True:
-                try:
-                    self.work()
-                    timeout = 0.0
-                    while not self.poll_event():
-                        timeout += SERIAL_POLL_PERIOD
-                        if timeout >= SERIAL_PING_INTERVAL:
-                                self.seen_event = True
-                except KeyboardInterrupt:
-                    # Propagate KeyboardInterrupt for thread termination
-                    raise
-                except BaseException as e:
-                    if self.ser is not None:
-                        self.ser.close()
-                    self.ser = None
-                    self.sync = False
-                    print e
-                except:
-                    raise
-        finally:
-            if not in_delay:
+        while True:
+            self.lock.acquire()
+            try:
+                self.work()
+                timeout = 0.0
+                while not self.poll_event():
+                    timeout += SERIAL_POLL_PERIOD
+                    if timeout >= SERIAL_PING_INTERVAL:
+                            self.seen_event = True
+            except KeyboardInterrupt:
+                # Propagate KeyboardInterrupt for thread termination
+                raise
+            except BaseException as e:
+                if self.ser is not None:
+                    self.ser.close()
+                self.ser = None
+                self.sync = False
+                print e
+            except:
+                raise
+            finally:
                 self.lock.release()
 
 class Globals(object):
