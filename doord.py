@@ -342,14 +342,17 @@ class DBThread(KillableThread):
         finally:
             self.lock.release()
     def run(self):
-        while True:
-            self.lock.acquire()
-            try:
-                if self.update():
-                    self.g.schedule(self.sync_keys)
-            finally:
-                self.lock.release()
-            self.delay(DB_POLL_PERIOD)
+        try:
+            while True:
+                self.lock.acquire()
+                try:
+                    if self.update():
+                        self.g.schedule(self.sync_keys)
+                finally:
+                    self.lock.release()
+                self.delay(DB_POLL_PERIOD)
+        except KeyboardInterrupt:
+            dbg("DB thread stopped");
 
 def encode64(val):
     if val < 26:
@@ -501,8 +504,9 @@ class AuxMonitor(KillableThread):
                 finally:
                     self.cond.release()
             except KeyboardInterrupt:
-                # Propagate KeyboardInterrupt for thread termination
-                raise
+                # We use KeyboardInterrupt for thread termination
+                self.dbg("Stopped")
+                break
             except BaseException as e:
                 if self.ser is not None:
                     self.ser.close()
@@ -736,8 +740,9 @@ class DoorMonitor(KillableThread):
                     if timeout >= SERIAL_PING_INTERVAL:
                             self.seen_event = True
             except KeyboardInterrupt:
-                # Propagate KeyboardInterrupt for thread termination
-                raise
+                # We use KeyboardInterrupt for thread termination
+                self.dbg("Stopped")
+                break
             except BaseException as e:
                 if self.ser is not None:
                     self.ser.close()
@@ -789,6 +794,7 @@ class Globals(object):
                         fn()
                     self.cond.acquire()
         finally:
+            dbg("Exiting")
             self.door_up.kill()
             self.door_down.kill()
             self.dbt.kill()
