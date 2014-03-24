@@ -74,9 +74,15 @@ class KillableThread(threading.Thread):
     def __init__(self):
         super(KillableThread, self).__init__()
         self._killed = False
+        self._kill_cond = None
 
     def kill(self):
+        if self._kill_cond is not None:
+            self._kill_cond.acquire()
         self._killed = True
+        if self._kill_cond is not None:
+            self._kill_cond.notify()
+            self._kill_cond.release()
 
     def check_kill(self):
         if self._killed:
@@ -137,8 +143,19 @@ class DBThread(KillableThread):
             self.db = MySQLdb.connect(host="localhost", user=self.db_user,
                     passwd=self.db_passwd, db="hackspace")
         return self.db.cursor();
-    # Returns true if tag list has changed
-    def update(self):
+    # Read and update webcam servo position from database
+    def poll_webcam(self):
+        cur = self._db_cursor()
+        cur.execute( \
+            "SELECT value" \
+            " FROM prefs " \
+            " WHERE ref='webcam';")
+        row = cur.fetchone()
+        if row is not None:
+            self.g.aux.update(int(row[0]))
+
+    # Read and update tag list from database
+    def poll_tags(self):
         changed = False
         try:
             self.poll_space_open()
@@ -170,7 +187,9 @@ class DBThread(KillableThread):
             self.db = None
             self.tags = []
             raise
-        return changed
+        if changed:
+            self.g.schedule(self.sync_keys)
+
     def _write_log(self, tstr, msg):
         dbg("LOG: %s %s" % (tstr, msg));
         cur = self._db_cursor()
@@ -184,13 +203,11 @@ class DBThread(KillableThread):
             self.lock.acquire()
             try:
                 dbg("Running space state update");
-                try:
-                    script = self.g.config.get("scripts", "update_state")
-                    os.system(script)
-                    self.poll_space_open()
-                finally:
-                    dbg("Space update done");
+                script = self.g.config.get("scripts", "update_state")
+                os.system(script)
+                self.poll_space_open()
             finally:
+                dbg("Space update done");
                 self.lock.release()
         self.g.schedule(updatefn)
 
@@ -335,8 +352,11 @@ class DBThread(KillableThread):
                     " VALUES ('%s','%s')" \
                     % (door_name, state_name))
                 self.door_state[door_name] = state
-                if door_name == "internaldoor" and not self.space_open_state:
-                    self.g.irc.send("Internal door %s" % state_name)
+                if door_name == "internaldoor":
+                    if state:
+                        self.g.aux.servo_override(180)
+                    if self.space_open_state:
+                        self.g.irc.send("Internal door %s" % state_name)
         finally:
             self.lock.release()
         self.update_space_state();
@@ -354,8 +374,8 @@ class DBThread(KillableThread):
             while True:
                 self.lock.acquire()
                 try:
-                    if self.update():
-                        self.g.schedule(self.sync_keys)
+                    self.poll_tags()
+                    self.poll_webcam()
                 finally:
                     self.lock.release()
                 self.delay(DB_POLL_PERIOD)
@@ -415,9 +435,13 @@ class AuxMonitor(KillableThread):
         self.port_name = port;
         self.ser = None
         self.servo_pos = None
-        self.next_temp_tick = None
+        self.last_servo = None
+        self.servo_override_pos = None
+        self.servo_override_time = None
+        self.temp_due = True
         self.g = g
         self.cond = threading.Condition()
+        self._kill_cond = self.cond
 
     def dbg(self, msg):
         dbg("%s: %s" % (self.port_name, msg))
@@ -453,18 +477,28 @@ class AuxMonitor(KillableThread):
             if r[:6] != "ANGLE=":
                 raise Exception("Bad servo response: %s" % r)
             self.last_servo = int(r[6:])
-        if self.servo_pos is None:
-            self.servo_pos = self.last_servo
-        if self.last_servo != self.servo_pos:
-            self.do_cmd_expect("W%d" % self.servo_pos, "OK", "Failed to move servo")
-            self.last_servo = self.servo_pos;
+        if self.servo_override_time <= time.time():
+            self.servo_override_pos = None
+        if self.servo_override_pos is not None:
+            newpos = self.servo_override_pos
+        elif self.servo_pos is not None:
+            newpos = self.servo_pos
+        else:
+            newpos = self.last_servo
+        if self.last_servo != newpos:
+            self.do_cmd_expect("W%d" % newpos, "OK", "Failed to move servo")
+            self.last_servo = newpos
+
+    def temp_trigger(self):
+        self.cond.acquire()
+        self.temp_due = True
+        self.update()
+        self.cond.release()
+        self.g.schedule(self.temp_trigger, 60)
 
     def sync_temp(self):
-        now = time.time()
-        if (self.next_temp_tick is None) or (self.next_temp_tick < now):
-            if (self.next_temp_tick is None) or (self.next_temp_tick < now - 30):
-                self.next_temp_tick = now
-            self.next_temp_tick += 60
+        if self.temp_due:
+            self.temp_due = False
             r = self.do_cmd("T")
             if r[:5] != "TEMP=":
                 raise Exception("Bad temperature response")
@@ -489,11 +523,12 @@ class AuxMonitor(KillableThread):
             self.sync_servo()
             self.sync_temp()
             self.need_sync = False
-            while (not self.need_sync) and (time.time() < self.next_temp_tick):
+            while not self.need_sync:
                 self.check_kill()
-                self.cond.wait(SERIAL_POLL_PERIOD)
+                self.cond.wait()
 
     def run(self):
+        self.temp_trigger()
         while True:
             try:
                 self.ser = serial.Serial("/dev/" + self.port_name, 9600, timeout=SERIAL_POLL_PERIOD, writeTimeout=SERIAL_POLL_PERIOD)
@@ -529,10 +564,19 @@ class AuxMonitor(KillableThread):
             self.cond.acquire()
             self.need_sync = True;
             if servo is not None:
-                self.servo_pos = pos
+                self.servo_pos = servo
             self.cond.notify()
             self.cond.release()
         self.g.schedule(updatefn)
+
+    # Called from other threads
+    def servo_override(self, angle):
+        self.cond.acquire()
+        self.servo_override_pos = angle
+        self.servo_override_time = time.time() + 10
+        self.g.schedule(self.update, 10)
+        self.update()
+        self.cond.release()
 
 # Communicate with door locks.
 # For Protocol details see DoorLock.ino
@@ -545,7 +589,7 @@ class DoorMonitor(KillableThread):
         self.remote_open = False
         self.sync = False
         self.last_door_state = None
-        self.keys = []
+        self.keys = None
         self.seen_kp = None
         self.otp = ''
         self.otp_expires = None
@@ -639,6 +683,7 @@ class DoorMonitor(KillableThread):
             if self.seen_event:
                 return True;
             self.lock.release()
+            self.dbg("WaitEvent");
             try:
                 self.delay(SERIAL_POLL_PERIOD);
             finally:
@@ -736,11 +781,12 @@ class DoorMonitor(KillableThread):
         self.lock.release()
 
     def run(self):
-        self.seen_event = True
-        in_delay = False
+        while self.keys is None:
+            self.delay(1)
         while True:
             self.lock.acquire()
             try:
+                self.check_kill()
                 self.work()
                 timeout = 0.0
                 while not self.poll_event():
@@ -767,6 +813,7 @@ class IRCSpammer(KillableThread):
         super(IRCSpammer, self).__init__()
         self.g = g
         self.cond = threading.Condition()
+        self._kill_cond = self.cond
         self.msgq = []
 
     def send(self, msg):
@@ -791,7 +838,7 @@ class IRCSpammer(KillableThread):
             try:
                 self.check_kill()
                 if len(self.msgq) == 0:
-                    self.cond.wait(SERIAL_POLL_PERIOD)
+                    self.cond.wait()
                 else:
                     s = self.msgq.pop(0);
                     self.cond.release()
@@ -821,35 +868,38 @@ class Globals(object):
         self.triggers = []
 
     # Run a function from the main thread with no locks held
-    def schedule(self, fn):
+    def schedule(self, fn, delay=0):
         self.cond.acquire()
-        self.triggers.append(fn)
+        self.triggers.append((fn, time.time()+delay))
         self.cond.notify()
         self.cond.release()
 
     def run(self):
-        # Ugly.  Do a manual key sync
-        self.dbt.update()
-        self.dbt.sync_keys()
-
-        self.cond.acquire()
         # Start all the worker threads
         self.dbt.start()
         self.door_up.start()
         self.door_down.start()
         self.aux.start()
         self.irc.start()
+        self.cond.acquire()
         try:
             while True:
+                now = time.time()
+                deadline = now  + SERIAL_POLL_PERIOD
                 triggers = self.triggers
                 self.triggers = []
-                if len(triggers) == 0:
-                    self.cond.wait(1)
-                else:
-                    self.cond.release()
-                    for fn in triggers:
-                        fn()
-                    self.cond.acquire()
+                for (fn, timeout) in triggers:
+                    if timeout > now:
+                        self.triggers.append((fn, timeout))
+                        if timeout < deadline:
+                            deadline = timeout
+                    else:
+                        self.cond.release()
+                        try:
+                            fn()
+                        finally:
+                            self.cond.acquire()
+                self.cond.wait(deadline - now)
         finally:
             dbg("Exiting")
             self.door_up.kill()
@@ -857,6 +907,7 @@ class Globals(object):
             self.dbt.kill()
             self.aux.kill()
             self.irc.kill()
+            self.cond.release()
 
 
 op = optparse.OptionParser()
