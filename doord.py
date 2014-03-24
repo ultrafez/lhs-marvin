@@ -17,6 +17,7 @@ import optparse
 import os
 import datetime
 import setproctitle
+import socket
 
 class PidFile(object):
     """Context manager that locks a pid file.  Implemented as class
@@ -51,6 +52,8 @@ SERIAL_PING_INTERVAL = 60
 SERIAL_POLL_PERIOD = 5
 
 DB_POLL_PERIOD = 20
+
+IRC_TIMEOUT = 30
 
 debug_lock = threading.Lock()
 
@@ -120,6 +123,7 @@ class DBThread(KillableThread):
         self.door_state = {}
         for k in port_door_map.values():
             self.door_state[k] = False
+        self.space_open_state = None
         self.lock = threading.Lock()
 
     def _keylist(self, fn):
@@ -185,7 +189,7 @@ class DBThread(KillableThread):
                     os.system(script)
                     self.poll_space_open()
                 finally:
-                    dbg("Done");
+                    dbg("Space update done");
             finally:
                 self.lock.release()
         self.g.schedule(updatefn)
@@ -242,8 +246,10 @@ class DBThread(KillableThread):
             " FROM prefs " \
             " WHERE ref='space-state' and value = 0;")
         row = cur.fetchone()
+        last_state = self.space_open_state
         self.space_open_state = (row is not None)
-        self.g.aux.update()
+        if last_state != self.space_open_state:
+            self.g.aux.update()
 
     # Can be safely called from other threads
     def is_space_open(self):
@@ -320,18 +326,20 @@ class DBThread(KillableThread):
             door_name = port_door_map[port]
             if self.door_state[door_name] != state:
                 if state:
-                    state_name = 'open'
+                    state_name = "open"
                 else:
-                    state_name = 'closed'
+                    state_name = "closed"
                 cur = self._db_cursor()
                 cur.execute( \
                     "REPLACE INTO prefs"\
                     " VALUES ('%s','%s')" \
                     % (door_name, state_name))
                 self.door_state[door_name] = state
+                if door_name == "internaldoor" and not self.space_open_state:
+                    self.g.irc.send("Internal door %s" % state_name)
         finally:
             self.lock.release()
-        g.dbt.update_space_state();
+        self.update_space_state();
 
     def sync_keys(self):
         dbg("Triggering key sync");
@@ -754,6 +762,53 @@ class DoorMonitor(KillableThread):
             finally:
                 self.lock.release()
 
+class IRCSpammer(KillableThread):
+    def __init__(self, g):
+        super(IRCSpammer, self).__init__()
+        self.g = g
+        self.cond = threading.Condition()
+        self.msgq = []
+
+    def send(self, msg):
+        self.cond.acquire()
+        self.msgq.append(msg)
+        self.cond.notify()
+        self.cond.release()
+
+    def really_send(self, msg):
+        address = (self.g.config.get("ircbot", "msghost"), self.g.config.get("ircbot", "msgport"))
+        channel = self.g.config.get("ircbot", "msgchannel")
+        s = socket.create_connection(address, IRC_TIMEOUT)
+        try:
+            s.sendall("%s %s\n" % (channel, msg))
+            s.shutdown(socket.SHUT_RDWR)
+        finally:
+            s.close()
+
+    def run(self):
+        while True:
+            self.cond.acquire()
+            try:
+                self.check_kill()
+                if len(self.msgq) == 0:
+                    self.cond.wait(SERIAL_POLL_PERIOD)
+                else:
+                    s = self.msgq.pop(0);
+                    self.cond.release()
+                    try:
+                        self.really_send(s)
+                    finally:
+                        self.cond.acquire()
+            except KeyboardInterrupt:
+                dbg("IRC thread stopped")
+                break
+            except BaseException as e:
+                print e
+            except:
+                pass
+            finally:
+                self.cond.release()
+
 class Globals(object):
     def __init__(self, config):
         self.config = config
@@ -761,6 +816,7 @@ class Globals(object):
         self.door_up = DoorMonitor("door_up")
         self.door_down = DoorMonitor("door_down")
         self.aux = AuxMonitor(self, "arduino")
+        self.irc = IRCSpammer(self)
         self.cond = threading.Condition()
         self.triggers = []
 
@@ -782,6 +838,7 @@ class Globals(object):
         self.door_up.start()
         self.door_down.start()
         self.aux.start()
+        self.irc.start()
         try:
             while True:
                 triggers = self.triggers
@@ -799,6 +856,7 @@ class Globals(object):
             self.door_down.kill()
             self.dbt.kill()
             self.aux.kill()
+            self.irc.kill()
 
 
 op = optparse.OptionParser()
