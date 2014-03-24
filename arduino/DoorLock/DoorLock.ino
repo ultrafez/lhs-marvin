@@ -3,6 +3,7 @@
  */
 #include <EEPROM.h>
 #include <util/crc16.h>
+#include <avr/wdt.h>
 #include "pinmap.h"
 
 #include "mfrc522.h"
@@ -22,6 +23,7 @@
 #define STATUS_ON_PERIOD 2000
 #define STATUS_OFF_PERIOD 200
 
+static bool want_reset;
 static bool status_lit;
 static unsigned long status_timeout;
 
@@ -191,6 +193,11 @@ uint8_t my_addr = '?';
 	Data: None
 	Response: MSG_ACK
 
+      MSG_RESET
+	Reset the door lock.  May take up to 10 seconds.
+	Data: None
+	Response: MSG_ACK
+
     Device to host commands:
 
       MSG_EVENT
@@ -223,7 +230,7 @@ uint8_t my_addr = '?';
 
       MSG_ACK
 	Indicate successful completion of MSG_LOG_CLEAR, MSG_KEY_RESET,
-	MSG_KEY_ADD or MSG_UNLOCK command.
+	MSG_KEY_ADD, MSG_UNLOCK or MSG_RESET command.
 	Data: None
 
       MSG_KEY_HASH
@@ -241,6 +248,7 @@ enum {
     MSG_KEY_ADD = 'N',
     MSG_KEY_INFO = 'K',
     MSG_UNLOCK = 'U',
+    MSG_RESET = 'Z',
     MSG_EVENT = 'E',
     MSG_KEYPRESS = 'Y',
     MSG_ACK = 'A',
@@ -682,6 +690,13 @@ remote_unlock(void)
 }
 
 static void
+reset_cmd(void)
+{
+  want_reset = true;
+  send_ack();
+}
+
+static void
 process_msg(uint8_t *msg, int len)
 {
   if (msg[0] == MSG_SET_ADDRESS)
@@ -735,6 +750,9 @@ process_msg(uint8_t *msg, int len)
 	  return;
 	case MSG_UNLOCK:
 	  remote_unlock();
+	  return;
+	case MSG_RESET:
+	  reset_cmd();
 	  return;
 	default:
 	  break;
@@ -1043,9 +1061,24 @@ do_leds(void)
 #endif
 }
 
+static void
+init_watchdog(void)
+{
+  wdt_enable(WDTO_2S);
+  wdt_reset();
+}
+
+static void
+do_watchdog(void)
+{
+  if (!want_reset)
+    wdt_reset();
+}
+
 // the loop routine runs over and over again forever:
 void loop()
 {
+  init_watchdog();
   comSerial.println("#Hello");
 
   pinMode(RFID1_RST_PIN, OUTPUT);
@@ -1086,6 +1119,7 @@ void loop()
 
   while (1)
     {
+      do_watchdog();
       do_rfid();
       do_buttons();
       do_keypad();
