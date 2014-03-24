@@ -74,15 +74,21 @@ class KillableThread(threading.Thread):
     def __init__(self):
         super(KillableThread, self).__init__()
         self._killed = False
-        self._kill_cond = None
+        self._cond = threading.Condition()
+        self.acquire = self._cond.acquire
+        self.release = self._cond.release
+        self.notify = self._cond.notify
 
     def kill(self):
-        if self._kill_cond is not None:
-            self._kill_cond.acquire()
         self._killed = True
-        if self._kill_cond is not None:
-            self._kill_cond.notify()
-            self._kill_cond.release()
+        self._cond.acquire()
+        self._cond.notify()
+        self._cond.release()
+
+    def wait(self, timeout=None):
+        self.check_kill()
+        self._cond.wait(timeout)
+        self.check_kill()
 
     def check_kill(self):
         if self._killed:
@@ -130,7 +136,27 @@ class DBThread(KillableThread):
         for k in port_door_map.values():
             self.door_state[k] = False
         self.space_open_state = None
-        self.lock = threading.Lock()
+
+    def wrapper(self, fn):
+        self.acquire()
+        try:
+            if self.db is None:
+                self.db = MySQLdb.connect(host="localhost", user=self.db_user,
+                        passwd=self.db_passwd, db="hackspace")
+            rc = fn(self.db.cursor())
+        except:
+            if self.db is not None:
+                self.db.close()
+            self.db = None
+            raise
+        finally:
+            self.release()
+        return rc
+
+    def schedule_wrapper(self, fn):
+        def wrapperfn():
+            self.wrapper(fn)
+        self.g.schedule(wrapperfn)
 
     def _keylist(self, fn):
         k = []
@@ -138,14 +164,8 @@ class DBThread(KillableThread):
             if fn(t):
                 k.append(t.tag_id + ' ' + t.pin)
         return k
-    def _db_cursor(self):
-        if self.db is None:
-            self.db = MySQLdb.connect(host="localhost", user=self.db_user,
-                    passwd=self.db_passwd, db="hackspace")
-        return self.db.cursor();
     # Read and update webcam servo position from database
-    def poll_webcam(self):
-        cur = self._db_cursor()
+    def poll_webcam(self, cur):
         cur.execute( \
             "SELECT value" \
             " FROM prefs " \
@@ -155,11 +175,9 @@ class DBThread(KillableThread):
             self.g.aux.update(int(row[0]))
 
     # Read and update tag list from database
-    def poll_tags(self):
+    def poll_tags(self, cur):
         changed = False
         try:
-            self.poll_space_open()
-            cur = self._db_cursor()
             cur.execute( \
                 "SELECT rfid_tags.card_id, rfid_tags.pin, people.access" \
                 " FROM people INNER JOIN rfid_tags" \
@@ -182,50 +200,36 @@ class DBThread(KillableThread):
                 if changed:
                     self.tags.append(t)
         except:
-            if self.db:
-                self.db.close()
-            self.db = None
             self.tags = []
             raise
         if changed:
             self.g.schedule(self.sync_keys)
 
-    def _write_log(self, tstr, msg):
-        dbg("LOG: %s %s" % (tstr, msg));
-        cur = self._db_cursor()
-        cur.execute( \
-                "INSERT INTO security (time, message)" \
-                " VALUES ('%s', '%s');" % (tstr, msg))
-
     # Can be safely called from other threads
     def update_space_state(self):
-        def updatefn():
-            self.lock.acquire()
+        def updatefn(cur):
             try:
                 dbg("Running space state update");
                 script = self.g.config.get("scripts", "update_state")
                 os.system(script)
-                self.poll_space_open()
             finally:
                 dbg("Space update done");
-                self.lock.release()
-        self.g.schedule(updatefn)
+            self.poll_space_open(cur)
+        self.schedule_wrapper(updatefn)
 
     # Can be safely called from other threads
     def log(self, t, msg):
         tstr = time.strftime("%Y-%m-%d %H:%M:%S", t)
-        # Closure to avoid deadlock
-        def logfn():
-            self.lock.acquire()
-            self._write_log(tstr, msg)
-            self.lock.release()
-        self.g.schedule(logfn)
+        def logfn(cur):
+            dbg("LOG: %s %s" % (tstr, msg));
+            cur.execute( \
+                    "INSERT INTO security (time, message)" \
+                    " VALUES ('%s', '%s');" % (tstr, msg))
+        self.schedule_wrapper(logfn)
 
     # Can be safely called from other threads
     def do_tag_in(self, tag):
-        self.lock.acquire()
-        try:
-            cur = self._db_cursor()
+        def tagfn(cur):
             cur.execute( \
                 "INSERT INTO presence(system)" \
                 " SELECT id FROM systems" \
@@ -237,27 +241,22 @@ class DBThread(KillableThread):
                 " SET systems.hidden = 0" \
                 " WHERE rfid_tags.card_id = '%s' AND systems.hidden = 2;" \
                 % (tag))
-        finally:
-            self.lock.release()
-        self.update_space_state();
+            self.update_space_state();
+        self.wrapper(tagfn)
 
     # Can be safely called from other threads
     def do_tag_out(self, tag):
-        self.lock.acquire()
-        try:
-            cur = self._db_cursor()
+        def tagfn(cur):
             cur.execute( \
                 "UPDATE (systems INNER JOIN rfid_tags" \
                 "  ON (systems.owner = rfid_tags.user_id))" \
                 " SET systems.hidden = 2" \
                 " WHERE rfid_tags.card_id = '%s' AND systems.hidden = 0;" \
                 % (tag))
-        finally:
-            self.lock.release()
-        self.update_space_state();
+            self.update_space_state();
+        self.wrapper(tagfn)
 
-    def poll_space_open(self):
-        cur = self._db_cursor()
+    def poll_space_open(self, cur):
         cur.execute( \
             "SELECT *" \
             " FROM prefs " \
@@ -270,17 +269,14 @@ class DBThread(KillableThread):
 
     # Can be safely called from other threads
     def is_space_open(self):
-        self.lock.acquire()
+        self.acquire()
         is_open = self.space_open_state
-        self.lock.release()
+        self.release()
         return is_open
 
     # Can be safely called from other threads
     def query_override(self, tag, match=""):
-        self.lock.acquire()
-        try:
-            cur = self._db_cursor()
-
+        def queryfn(cur):
             if tag == '!#':
                 # Magic hack for Tuesday open evenings.
                 now = datetime.datetime.now()
@@ -319,34 +315,28 @@ class DBThread(KillableThread):
                 if row is None:
                     return False
                 return self.space_open_state
-        finally:
-            self.lock.release()
-        return False
+            return False
+        return self.wrapper(queryfn)
 
     # Can be safely called from other threads
     def record_temp(self, temp):
-        self.lock.acquire()
-        try:
+        def tempfn(cur):
             dbg("Logging temperature %d" % temp)
-            cur = self._db_cursor()
             cur.execute( \
                 "INSERT INTO environmental(temperature)" \
                 " VALUES (%d)" \
                 % (temp))
-        finally:
-            self.lock.release()
+        self.wrapper(tempfn)
 
     # Can be safely called from other threads
     def set_door_state(self, port, state):
-        self.lock.acquire()
-        try:
+        def doorfn(cur):
             door_name = port_door_map[port]
             if self.door_state[door_name] != state:
                 if state:
                     state_name = "open"
                 else:
                     state_name = "closed"
-                cur = self._db_cursor()
                 cur.execute( \
                     "REPLACE INTO prefs"\
                     " VALUES ('%s','%s')" \
@@ -357,30 +347,34 @@ class DBThread(KillableThread):
                         self.g.aux.servo_override(180)
                     if not self.space_open_state:
                         self.g.irc.send("Internal door %s" % state_name)
-        finally:
-            self.lock.release()
-        self.update_space_state();
+            self.update_space_state();
+        self.wrapper(doorfn)
 
     def sync_keys(self):
         dbg("Triggering key sync");
-        self.lock.acquire()
+        self.acquire()
         try:
             self.g.door_up.set_keys(self._keylist(Tag.upstairs_ok))
             self.g.door_down.set_keys(self._keylist(Tag.downstairs_ok))
         finally:
-            self.lock.release()
+            self.release()
     def run(self):
-        try:
-            while True:
-                self.lock.acquire()
-                try:
-                    self.poll_tags()
-                    self.poll_webcam()
-                finally:
-                    self.lock.release()
-                self.delay(DB_POLL_PERIOD)
-        except KeyboardInterrupt:
-            dbg("DB thread stopped");
+        while True:
+            self.acquire()
+            try:
+                self.wrapper(self.poll_space_open)
+                self.wrapper(self.poll_tags)
+                self.wrapper(self.poll_webcam)
+                self.wait(DB_POLL_PERIOD)
+            except KeyboardInterrupt:
+                dbg("DB thread stopped");
+                break;
+            except BaseException as e:
+                print e
+            except:
+                pass
+            finally:
+                self.release()
 
 def encode64(val):
     if val < 26:
@@ -440,8 +434,6 @@ class AuxMonitor(KillableThread):
         self.servo_override_time = None
         self.temp_due = True
         self.g = g
-        self.cond = threading.Condition()
-        self._kill_cond = self.cond
 
     def dbg(self, msg):
         dbg("%s: %s" % (self.port_name, msg))
@@ -490,10 +482,10 @@ class AuxMonitor(KillableThread):
             self.last_servo = newpos
 
     def temp_trigger(self):
-        self.cond.acquire()
+        self.acquire()
         self.temp_due = True
         self.update()
-        self.cond.release()
+        self.release()
         self.g.schedule(self.temp_trigger, 60)
 
     def sync_temp(self):
@@ -524,8 +516,7 @@ class AuxMonitor(KillableThread):
             self.sync_temp()
             self.need_sync = False
             while not self.need_sync:
-                self.check_kill()
-                self.cond.wait()
+                self.wait()
 
     def run(self):
         self.temp_trigger()
@@ -542,10 +533,10 @@ class AuxMonitor(KillableThread):
                         self.ser.read(1)
                     time.sleep(1)
                 try:
-                    self.cond.acquire()
+                    self.acquire()
                     self.work()
                 finally:
-                    self.cond.release()
+                    self.release()
             except KeyboardInterrupt:
                 # We use KeyboardInterrupt for thread termination
                 self.dbg("Stopped")
@@ -561,22 +552,22 @@ class AuxMonitor(KillableThread):
     # Called from other threads
     def update(self, servo=None):
         def updatefn():
-            self.cond.acquire()
+            self.acquire()
             self.need_sync = True;
             if servo is not None:
                 self.servo_pos = servo
-            self.cond.notify()
-            self.cond.release()
+            self.notify()
+            self.release()
         self.g.schedule(updatefn)
 
     # Called from other threads
     def servo_override(self, angle):
-        self.cond.acquire()
+        self.acquire()
         self.servo_override_pos = angle
         self.servo_override_time = time.time() + 10
         self.g.schedule(self.update, 10)
         self.update()
-        self.cond.release()
+        self.release()
 
 # Communicate with door locks.
 # For Protocol details see DoorLock.ino
@@ -593,7 +584,6 @@ class DoorMonitor(KillableThread):
         self.seen_kp = None
         self.otp = ''
         self.otp_expires = None
-        self.lock = threading.Lock()
         self.current_response = ""
 
     def dbg(self, msg):
@@ -604,12 +594,12 @@ class DoorMonitor(KillableThread):
         while c != '\n':
             self.check_kill()
             if not block:
-                self.lock.release()
+                self.release()
             try:
                 c = self.ser.read()
             finally:
                 if not block:
-                    self.lock.acquire()
+                    self.acquire()
             if c == "":
                 if block:
                     raise Exception("No response from %s" % self.port_name)
@@ -682,12 +672,7 @@ class DoorMonitor(KillableThread):
         if not self.sync:
             if self.seen_event:
                 return True;
-            self.lock.release()
-            self.dbg("WaitEvent");
-            try:
-                self.delay(SERIAL_POLL_PERIOD);
-            finally:
-                self.lock.acquire()
+            self.wait(SERIAL_POLL_PERIOD);
             return False;
         r = self.read_response(False)
         if r is not None:
@@ -774,17 +759,17 @@ class DoorMonitor(KillableThread):
                 self.otp_expires = None
 
     def set_keys(self, keys):
-        self.lock.acquire()
+        self.acquire()
         self.keys = keys[:]
         self.sync = False
         self.seen_event = True
-        self.lock.release()
+        self.release()
 
     def run(self):
         while self.keys is None:
             self.delay(1)
         while True:
-            self.lock.acquire()
+            self.acquire()
             try:
                 self.check_kill()
                 self.work()
@@ -806,21 +791,19 @@ class DoorMonitor(KillableThread):
             except:
                 raise
             finally:
-                self.lock.release()
+                self.release()
 
 class IRCSpammer(KillableThread):
     def __init__(self, g):
         super(IRCSpammer, self).__init__()
         self.g = g
-        self.cond = threading.Condition()
-        self._kill_cond = self.cond
         self.msgq = []
 
     def send(self, msg):
-        self.cond.acquire()
+        self.acquire()
         self.msgq.append(msg)
-        self.cond.notify()
-        self.cond.release()
+        self.notify()
+        self.release()
 
     def really_send(self, msg):
         address = (self.g.config.get("ircbot", "msghost"), self.g.config.get("ircbot", "msgport"))
@@ -834,18 +817,18 @@ class IRCSpammer(KillableThread):
 
     def run(self):
         while True:
-            self.cond.acquire()
+            self.acquire()
             try:
                 self.check_kill()
                 if len(self.msgq) == 0:
-                    self.cond.wait()
+                    self.wait()
                 else:
                     s = self.msgq.pop(0);
-                    self.cond.release()
+                    self.release()
                     try:
                         self.really_send(s)
                     finally:
-                        self.cond.acquire()
+                        self.acquire()
             except KeyboardInterrupt:
                 dbg("IRC thread stopped")
                 break
@@ -854,7 +837,7 @@ class IRCSpammer(KillableThread):
             except:
                 pass
             finally:
-                self.cond.release()
+                self.release()
 
 class Globals(object):
     def __init__(self, config):
