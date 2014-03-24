@@ -36,7 +36,10 @@
 
 #define SENSE_PIN 3
 
-#define BUTTON_PIN GPA(0)
+//#define BUTTON_PIN GPA(0)
+// Internal release button
+#define RELEASE_PIN GPA(0)
+
 
 #define UNLOCK_PERIOD 10000
 
@@ -94,8 +97,5 @@
 #define LOCK_PIN 2
 #define LOCK_OFF 0
 #define LOCK_ON 1
-
-// Internal release button
-//#define RELEASE_PIN 3
 
 #endif
