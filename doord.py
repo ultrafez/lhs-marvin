@@ -355,7 +355,7 @@ class DBThread(KillableThread):
                 if door_name == "internaldoor":
                     if state:
                         self.g.aux.servo_override(180)
-                    if self.space_open_state:
+                    if not self.space_open_state:
                         self.g.irc.send("Internal door %s" % state_name)
         finally:
             self.lock.release()
