@@ -164,6 +164,23 @@ class DBThread(KillableThread):
             if fn(t):
                 k.append(t.tag_id + ' ' + t.pin)
         return k
+
+    def sync_dummy_tags(self, cur):
+        # Create dummy system entries for RFID cards
+        # Delete removed tags
+        cur.execute( \
+            "DELETE FROM systems" \
+            " WHERE source='r' AND (mac, owner) NOT IN" \
+            "  (SELECT r.card_id, r.user_id FROM rfid_tags AS r);")
+        # Add new ones
+        cur.execute( \
+            "INSERT INTO systems(mac, description, owner, source, hidden)" \
+            " SELECT r.card_id, 'RFID', r.user_id, 'r', 0" \
+            " FROM rfid_tags AS r" \
+            " WHERE r.card_id NOT IN" \
+            " (SELECT s.mac FROM systems AS s" \
+            "  WHERE s.source='r');")
+
     # Read and update webcam servo position from database
     def poll_webcam(self, cur):
         cur.execute( \
@@ -358,6 +375,7 @@ class DBThread(KillableThread):
             self.g.door_down.set_keys(self._keylist(Tag.downstairs_ok))
         finally:
             self.release()
+
     def run(self):
         while True:
             self.acquire()
@@ -365,6 +383,7 @@ class DBThread(KillableThread):
                 self.wrapper(self.poll_space_open)
                 self.wrapper(self.poll_tags)
                 self.wrapper(self.poll_webcam)
+                self.wrapper(self.sync_dummy_tags)
                 self.wait(DB_POLL_PERIOD)
             except KeyboardInterrupt:
                 dbg("DB thread stopped");
