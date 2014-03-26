@@ -370,7 +370,7 @@ class DBThread(KillableThread):
                 dbg("DB thread stopped");
                 break;
             except BaseException as e:
-                print e
+                dbg(str(e))
             except:
                 pass
             finally:
@@ -544,7 +544,7 @@ class AuxMonitor(KillableThread):
             except BaseException as e:
                 if self.ser is not None:
                     self.ser.close()
-                print e
+                self.dbg(str(e))
             except:
                 raise
             self.delay(SERIAL_PING_INTERVAL)
@@ -787,7 +787,7 @@ class DoorMonitor(KillableThread):
                     self.ser.close()
                 self.ser = None
                 self.sync = False
-                print e
+                self.dbg(str(e))
             except:
                 raise
             finally:
@@ -833,7 +833,7 @@ class IRCSpammer(KillableThread):
                 dbg("IRC thread stopped")
                 break
             except BaseException as e:
-                print e
+                dbg(str(e))
             except:
                 pass
             finally:
@@ -880,17 +880,23 @@ class Globals(object):
                         self.cond.release()
                         try:
                             fn()
+                        except KeyboardInterrupt:
+                            pass
+                        except BaseException as e:
+                            dbg(str(e))
                         finally:
                             self.cond.acquire()
                 self.cond.wait(deadline - now)
+        except KeyboardInterrupt:
+            pass
         finally:
             dbg("Exiting")
+            self.cond.release()
             self.door_up.kill()
             self.door_down.kill()
             self.dbt.kill()
             self.aux.kill()
             self.irc.kill()
-            self.cond.release()
 
 
 op = optparse.OptionParser()
