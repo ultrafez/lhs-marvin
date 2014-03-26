@@ -55,6 +55,10 @@ DB_POLL_PERIOD = 20
 
 IRC_TIMEOUT = 30
 
+ARP_SCAN_INTERVAL = 60
+# RFID tags keep the space open for 15 minutes
+RFID_SCAN_LIFETIME = 15 * 60
+
 debug_lock = threading.Lock()
 
 port_door_map = {"door_up" : "internaldoor",
@@ -231,8 +235,8 @@ class DBThread(KillableThread):
                 "UPDATE systems AS s" \
                 " SET s.hidden=0" \
                 " WHERE s.hidden=2 AND s.id NOT IN"\
-                " (SELECT p.system FROM presence AS p" \
-                "  WHERE p.time > now() - interval 2 minute);")
+                " (SELECT p.system FROM presence_deadline AS p" \
+                "  WHERE p.expires => now();")
             # How many people are here?
             cur.execute( \
                 "SELECT people.name" \
@@ -284,6 +288,7 @@ class DBThread(KillableThread):
     # Can be safely called from other threads
     def do_tag_in(self, tag):
         def tagfn(cur):
+            self.add_presence_entry(cur, tag, 'r')
             cur.execute( \
                 "INSERT INTO presence(system)" \
                 " SELECT id FROM systems" \
@@ -309,6 +314,26 @@ class DBThread(KillableThread):
                 % (tag))
             self.update_space_state();
         self.wrapper(tagfn)
+
+    def add_presence_entry(self, cur, mac, source):
+        if source == 'r':
+            lifetime = RFID_SCAN_LIFETIME
+        else:
+            lifetime = int(ARP_SCAN_INTERVAL * 2.5)
+        cur.execute( \
+            "REPLACE INTO presence_deadline" \
+            " SELECT id, now() + interval %d second" \
+            " FROM systems" \
+            " WHERE source = '%s' AND mac = '%s'" \
+            % (lifetime, source, mac))
+
+
+    # Can be safely called from other threads
+    def update_arp_entries(self, macs):
+        def add_macs(cur):
+            for m in macs:
+                self.add_presence_entry(cur, m, 'e')
+        self.wrapper(add_macs)
 
     def poll_space_open(self, cur):
         cur.execute( \
@@ -897,6 +922,79 @@ class IRCSpammer(KillableThread):
             finally:
                 self.release()
 
+class ARPMonitor(KillableThread):
+    def __init__(self, g):
+        super(ARPMonitor, self).__init__()
+        self.g = g
+        self.current_ip = set()
+        self.current_mac = set()
+        self.ping_pending = set()
+
+    def dbg(self, msg):
+        dbg("arp: %s" % (msg))
+
+    def scan_arp(self):
+        self.acquire()
+        try:
+            self.dbg("scanning table")
+            new_ip = set()
+            new_mac = set()
+            f = open("/proc/net/arp")
+            # Skip header
+            try:
+                f.readline()
+                for l in f:
+                    r = l.split()
+                    ip = r[0]
+                    flags = r[2]
+                    mac = r[3]
+                    if flags != '0x0' and mac != '00:00:00:00:00:00':
+                        new_ip.add(ip)
+                        new_mac.add(mac)
+            finally:
+                f.close()
+            missing_ip = self.current_ip - new_ip
+            self.current_ip = new_ip
+            if len(missing_ip) > 0:
+                self.ping_pending |= missing_ip
+                self.notify()
+            self.g.dbt.update_arp_entries(new_mac)
+            unseen_mac = new_mac - self.current_mac
+            self.current_mac = new_mac
+        finally:
+            self.release()
+            self.g.schedule(self.scan_arp, ARP_SCAN_INTERVAL)
+
+    def ping(self, ip):
+        self.dbg("Pinging %s" % ip)
+        try:
+            os.system("ping -c 1 -W 5 %s" % ip)
+        except:
+            pass
+
+    def ping_all(self, pending):
+        for ip in pending:
+            self.ping(ip)
+
+    def run(self):
+        self.g.schedule(self.scan_arp)
+        while True:
+            try:
+                self.acquire()
+                try:
+                    pending = self.ping_pending
+                    self.ping_pending = set()
+                    if len(pending) == 0:
+                        self.wait()
+                finally:
+                    self.release()
+                self.ping_all(pending)
+            except KeyboardInterrupt:
+                self.dbg("stopped")
+                break;
+            except BaseException as e:
+                self.dbg(str(e))
+
 class Globals(object):
     def __init__(self, config):
         self.config = config
@@ -905,6 +1003,7 @@ class Globals(object):
         self.door_down = DoorMonitor("door_down")
         self.aux = AuxMonitor(self, "arduino")
         self.irc = IRCSpammer(self)
+        self.arp = ARPMonitor(self)
         self.cond = threading.Condition()
         self.triggers = []
 
@@ -922,6 +1021,7 @@ class Globals(object):
         self.door_down.start()
         self.aux.start()
         self.irc.start()
+        self.arp.start()
         self.cond.acquire()
         try:
             while True:
@@ -955,7 +1055,7 @@ class Globals(object):
             self.dbt.kill()
             self.aux.kill()
             self.irc.kill()
-
+            self.arp.kill()
 
 op = optparse.OptionParser()
 op.add_option("-d", "--debug", action="store_true", dest="debug", default=False)
