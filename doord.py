@@ -225,13 +225,50 @@ class DBThread(KillableThread):
     # Can be safely called from other threads
     def update_space_state(self):
         def updatefn(cur):
-            try:
-                dbg("Running space state update");
-                script = self.g.config.get("scripts", "update_state")
-                os.system(script)
-            finally:
-                dbg("Space update done");
-            self.poll_space_open(cur)
+            dbg("Running state update")
+            # Expire temporarily hidden devices
+            cur.execute( \
+                "UPDATE systems AS s" \
+                " SET s.hidden=0" \
+                " WHERE s.hidden=2 AND s.id NOT IN"\
+                " (SELECT p.system FROM presence AS p" \
+                "  WHERE p.time > now() - interval 2 minute);")
+            # How many people are here?
+            cur.execute( \
+                "SELECT people.name" \
+                " FROM (systems AS s INNER JOIN presence"\
+                "  ON s.id = presence.system)" \
+                " INNER JOIN people" \
+                " ON s.owner = people.id" \
+                " WHERE s.hidden = 0" \
+                "  AND presence.time > now() - interval 2 minute" \
+                " LIMIT 1;")
+            row = cur.fetchone();
+            old_state = self.space_open_state
+            if row is None:
+                # Nobody here
+                # If the door is closed then close the space
+                if old_state and not self.door_state["internaldoor"]:
+                    self.space_open_state = False
+                    self.g.irc.send("The space is closed")
+            else:
+                # Somebody here
+                if not old_state:
+                    # Open the space
+                    # TODO: Only open the space if somebody has also unlocked the door?
+                    self.space_open_state = True
+                    self.g.irc.send("The space is open! %s is here!" % row[0])
+            if self.space_open_state != old_state:
+                if self.space_open_state:
+                    state_val = 0
+                else:
+                    state_val = 2
+                cur.execute( \
+                    "UPDATE prefs" \
+                    " SET value=%d" \
+                    " WHERE ref = 'space-state';" \
+                    % state_val)
+                self.g.aux.update()
         self.schedule_wrapper(updatefn)
 
     # Can be safely called from other threads
