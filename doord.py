@@ -635,6 +635,7 @@ class DoorMonitor(KillableThread):
         self.seen_event = False
         self.remote_open = False
         self.sync = False
+        self.flush_backlog = True
         self.last_door_state = None
         self.keys = None
         self.seen_kp = None
@@ -723,6 +724,7 @@ class DoorMonitor(KillableThread):
             for key in self.keys:
                 self.do_cmd_expect("N0" + key, "A0", "Device not accepting keys")
         self.sync = True
+        self.flush_backlog = True
 
     def poll_event(self):
         if not self.sync:
@@ -772,9 +774,8 @@ class DoorMonitor(KillableThread):
             astr = "Unknown"
 
         g.dbt.log(lt, "%s: %s %s" % (self.port_name, astr, tag))
-        if action == 'R' or action == 'Q':
+        if (action == 'R' or action == 'Q') and not self.flush_backlog:
             # Allow all member tags if space is open
-            # FIXME: Ignore old events if catching up after a resync
             if g.dbt.query_override(tag):
                 g.dbt.do_tag_in(tag);
                 self.remote_open = True;
@@ -796,6 +797,7 @@ class DoorMonitor(KillableThread):
                 self.dbg("Log event: %s" % r[2:])
                 self.handle_log(r[2:])
                 self.do_cmd_expect("C0", "A0", "Error clearing event log")
+            self.flush_backlog = False
         if self.seen_kp is not None:
             c = self.seen_kp
             self.seen_kp = None
