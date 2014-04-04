@@ -18,6 +18,7 @@ import os
 import datetime
 import setproctitle
 import socket
+import subprocess
 
 class PidFile(object):
     """Context manager that locks a pid file.  Implemented as class
@@ -236,16 +237,16 @@ class DBThread(KillableThread):
                 " SET s.hidden=0" \
                 " WHERE s.hidden=2 AND s.id NOT IN"\
                 " (SELECT p.system FROM presence_deadline AS p" \
-                "  WHERE p.expires => now();")
-            # How many people are here?
+                "  WHERE p.expires > now());")
+            # Who is here?
             cur.execute( \
                 "SELECT people.name" \
-                " FROM (systems AS s INNER JOIN presence"\
-                "  ON s.id = presence.system)" \
+                " FROM (systems AS s INNER JOIN presence_deadline as pd"\
+                "  ON s.id = pd.system)" \
                 " INNER JOIN people" \
                 " ON s.owner = people.id" \
                 " WHERE s.hidden = 0" \
-                "  AND presence.time > now() - interval 2 minute" \
+                "  AND pd.expires > now()" \
                 " LIMIT 1;")
             row = cur.fetchone();
             old_state = self.space_open_state
@@ -289,11 +290,6 @@ class DBThread(KillableThread):
     def do_tag_in(self, tag):
         def tagfn(cur):
             self.add_presence_entry(cur, tag, 'r')
-            cur.execute( \
-                "INSERT INTO presence(system)" \
-                " SELECT id FROM systems" \
-                " WHERE mac = '%s' AND source='r';" \
-                % (tag))
             cur.execute( \
                 "UPDATE (systems INNER JOIN rfid_tags" \
                 "  ON (systems.owner = rfid_tags.user_id))" \
@@ -968,12 +964,16 @@ class ARPMonitor(KillableThread):
     def ping(self, ip):
         self.dbg("Pinging %s" % ip)
         try:
-            os.system("ping -c 1 -W 5 %s" % ip)
+            p = subprocess.Popen(["ping", "-c", "1", "-W", "5", ip], \
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            p.communicate()
+            p.wait()
         except:
-            pass
+            self.dbg("ping failed")
 
     def ping_all(self, pending):
         for ip in pending:
+            self.check_kill()
             self.ping(ip)
 
     def run(self):
