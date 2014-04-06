@@ -241,12 +241,14 @@ class DBThread(KillableThread):
             # Who is here?
             cur.execute( \
                 "SELECT people.name" \
-                " FROM (systems AS s INNER JOIN presence_deadline as pd"\
+                " FROM (systems AS s" \
+                " INNER JOIN presence_deadline as pd"\
                 "  ON s.id = pd.system)" \
                 " INNER JOIN people" \
-                " ON s.owner = people.id" \
+                "  ON s.owner = people.id" \
                 " WHERE s.hidden = 0" \
                 "  AND pd.expires > now()" \
+                "  AND people.member = 'YES'" \
                 " LIMIT 1;")
             row = cur.fetchone();
             old_state = self.space_open_state
@@ -330,6 +332,7 @@ class DBThread(KillableThread):
             for m in macs:
                 self.add_presence_entry(cur, m, 'e')
         self.wrapper(add_macs)
+        self.update_space_state();
 
     def poll_space_open(self, cur):
         cur.execute( \
