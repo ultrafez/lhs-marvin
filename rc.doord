@@ -46,7 +46,8 @@ case "$1" in
 	;;
   restart|force-reload)
 	$0 stop
-	sleep 1
+	# Give the old process a few seconds to terminate before starting a new one
+	sleep 10
 	$0 start	
 	;;
   *)
