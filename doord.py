@@ -1019,6 +1019,7 @@ class Globals(object):
 
     def run(self):
         # Start all the worker threads
+        dbg("Starting threads");
         self.dbt.start()
         self.door_up.start()
         self.door_down.start()
@@ -1039,6 +1040,7 @@ class Globals(object):
                             deadline = timeout
                     else:
                         self.cond.release()
+                        deadline = None
                         try:
                             fn()
                         except KeyboardInterrupt:
@@ -1047,7 +1049,8 @@ class Globals(object):
                             dbg(str(e))
                         finally:
                             self.cond.acquire()
-                self.cond.wait(deadline - now)
+                if deadline is not None:
+                    self.cond.wait(deadline - now)
         except KeyboardInterrupt:
             pass
         finally:
