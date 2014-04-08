@@ -141,6 +141,7 @@ class DBThread(KillableThread):
         for k in port_door_map.values():
             self.door_state[k] = False
         self.space_open_state = None
+        self.last_tag_out = None
 
     def wrapper(self, fn):
         self.acquire()
@@ -235,9 +236,10 @@ class DBThread(KillableThread):
             cur.execute( \
                 "UPDATE systems AS s" \
                 " SET s.hidden=0" \
-                " WHERE s.hidden=2 AND s.id NOT IN"\
-                " (SELECT p.system FROM presence_deadline AS p" \
-                "  WHERE p.expires > now());")
+                " WHERE s.hidden=2" \
+                "  AND s.id NOT IN" \
+                "  (SELECT p.system FROM presence_deadline AS p" \
+                "   WHERE p.expires > now());")
             # Who is here?
             cur.execute( \
                 "SELECT people.name" \
@@ -310,8 +312,24 @@ class DBThread(KillableThread):
                 " SET systems.hidden = 2" \
                 " WHERE rfid_tags.card_id = '%s' AND systems.hidden = 0;" \
                 % (tag))
+            self.last_tag_out = time.time()
             self.update_space_state();
         self.wrapper(tagfn)
+
+    def seen_star(self, port):
+        def starfn(cur):
+            if port_door_map[port] != "internaldoor":
+                return
+            if self.last_tag_out is None or self.last_tag_out < time.time() - 60:
+                return
+            dbg("Force-close")
+            # Force-close by temporarily ignoring all currently present devices
+            cur.execute( \
+                "UPDATE systems" \
+                " SET systems.hidden = 2" \
+                " WHERE systems.hidden = 0;")
+            self.update_space_state()
+        self.schedule_wrapper(starfn)
 
     def add_presence_entry(self, cur, mac, source):
         if source == 'r':
@@ -825,7 +843,9 @@ class DoorMonitor(KillableThread):
         if self.seen_kp is not None:
             c = self.seen_kp
             self.seen_kp = None
-            if c != '#':
+            if c == '*':
+                g.dbt.seen_star(self.port_name)
+            elif c != '#':
                 c = self.otp + c;
                 self.otp = c
                 self.otp_expires = time.time() + 60
