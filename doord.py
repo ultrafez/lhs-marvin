@@ -228,6 +228,11 @@ class DBThread(KillableThread):
         if changed:
             self.g.schedule(self.sync_keys)
 
+    def recent_tag_out(self):
+        if self.last_tag_out is None:
+            return False
+        return self.last_tag_out > time.time() - 60
+
     # Can be safely called from other threads
     def update_space_state(self):
         def updatefn(cur):
@@ -256,8 +261,12 @@ class DBThread(KillableThread):
             old_state = self.space_open_state
             if row is None:
                 # Nobody here
-                # If the door is closed then close the space
-                if old_state and not self.door_state["internaldoor"]:
+                # If the door is closed (or someone tagged out) then close the space
+                if self.recent_tag_out():
+                    new_state = False
+                else:
+                    new_state = self.door_state["internaldoor"]
+                if old_state and not new_state:
                     self.space_open_state = False
                     self.g.irc.send("The space is closed")
             else:
@@ -320,7 +329,7 @@ class DBThread(KillableThread):
         def starfn(cur):
             if port_door_map[port] != "internaldoor":
                 return
-            if self.last_tag_out is None or self.last_tag_out < time.time() - 60:
+            if not self.recent_tag_out():
                 return
             dbg("Force-close")
             # Force-close by temporarily ignoring all currently present devices
