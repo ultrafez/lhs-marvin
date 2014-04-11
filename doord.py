@@ -364,6 +364,22 @@ class DBThread(KillableThread):
         self.wrapper(add_macs)
         self.update_space_state();
 
+    # Can be safely called from other threads
+    def check_bogon(self, mac, ip):
+        self.dbg("Checking bogon %s (%s)" % (mac, ip))
+        def bogonfn(cur):
+            cur.execute( \
+                "REPLACE INTO bogons (address, info)" \
+                " SELECT * FROM" \
+                "  (SELECT '%s' as mac, '%s') AS tmp" \
+                " WHERE NOT EXISTS" \
+                "  (SELECT systems.mac" \
+                "   FROM systems" \
+                "   WHERE systems.mac = tmp.mac" \
+                "    AND systems.source = 'e');" \
+                % (mac, ip))
+        self.wrapper(bogonfn)
+
     def poll_space_open(self, cur):
         cur.execute( \
             "SELECT *" \
@@ -969,6 +985,7 @@ class ARPMonitor(KillableThread):
         try:
             self.dbg("scanning table")
             new_ip = set()
+            mac_map = {}
             new_mac = set()
             f = open("/proc/net/arp")
             # Skip header
@@ -981,7 +998,7 @@ class ARPMonitor(KillableThread):
                     mac = r[3]
                     if flags != '0x0' and mac != '00:00:00:00:00:00':
                         new_ip.add(ip)
-                        new_mac.add(mac)
+                        mac_map[mac] = ip
             finally:
                 f.close()
             missing_ip = self.current_ip - new_ip
@@ -989,9 +1006,12 @@ class ARPMonitor(KillableThread):
             if len(missing_ip) > 0:
                 self.ping_pending |= missing_ip
                 self.notify()
+            new_mac = set(mac_map.keys())
             self.g.dbt.update_arp_entries(new_mac)
             unseen_mac = new_mac - self.current_mac
             self.current_mac = new_mac
+            for m in unseen_mac:
+                self.g.dbt.check_bogon(m, mac_map[m])
         finally:
             self.release()
             self.g.schedule(self.scan_arp, ARP_SCAN_INTERVAL)
