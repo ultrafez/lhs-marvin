@@ -143,6 +143,9 @@ class DBThread(KillableThread):
         self.space_open_state = None
         self.last_tag_out = None
 
+    def dbg(self, msg):
+        dbg("dbt: %s" % (msg))
+
     def wrapper(self, fn):
         self.acquire()
         try:
@@ -215,7 +218,7 @@ class DBThread(KillableThread):
                 t = Tag(row[0], row[1], row[2])
                 if not changed:
                     if (tag_num == len(self.tags)) or (self.tags[tag_num] != t):
-                        dbg("Tags changed");
+                        self.dbg("Tags changed");
                         changed = True
                         del self.tags[tag_num:]
                     else:
@@ -236,7 +239,7 @@ class DBThread(KillableThread):
     # Can be safely called from other threads
     def update_space_state(self):
         def updatefn(cur):
-            dbg("Running state update")
+            self.dbg("Running state update")
             # Expire temporarily hidden devices
             cur.execute( \
                 "UPDATE systems AS s" \
@@ -293,7 +296,7 @@ class DBThread(KillableThread):
     def log(self, t, msg):
         tstr = time.strftime("%Y-%m-%d %H:%M:%S", t)
         def logfn(cur):
-            dbg("LOG: %s %s" % (tstr, msg));
+            self.dbg("LOG: %s %s" % (tstr, msg));
             cur.execute( \
                     "INSERT INTO security (time, message)" \
                     " VALUES ('%s', '%s');" % (tstr, msg))
@@ -331,7 +334,7 @@ class DBThread(KillableThread):
                 return
             if not self.recent_tag_out():
                 return
-            dbg("Force-close")
+            self.dbg("Force-close")
             # Force-close by temporarily ignoring all currently present devices
             cur.execute( \
                 "UPDATE systems" \
@@ -399,9 +402,9 @@ class DBThread(KillableThread):
                     val = row[0]
                     if len(val) < 6:
                         continue
-                    dbg("Matching '%s'/'%s'" % (val, match))
+                    self.dbg("Matching '%s'/'%s'" % (val, match))
                     if val == match[-len(val):]:
-                        dbg("Matched OTP key %s" % val)
+                        self.dbg("Matched OTP key %s" % val)
                         cur.execute( \
                             "UPDATE otp_keys" \
                             " SET expires = now() + interval 10 minute" \
@@ -426,7 +429,7 @@ class DBThread(KillableThread):
     # Can be safely called from other threads
     def record_temp(self, temp):
         def tempfn(cur):
-            dbg("Logging temperature %d" % temp)
+            self.dbg("Logging temperature %d" % temp)
             cur.execute( \
                 "INSERT INTO environmental(temperature)" \
                 " VALUES (%d)" \
@@ -456,7 +459,7 @@ class DBThread(KillableThread):
         self.wrapper(doorfn)
 
     def sync_keys(self):
-        dbg("Triggering key sync");
+        self.dbg("Triggering key sync");
         self.acquire()
         try:
             self.g.door_up.set_keys(self._keylist(Tag.upstairs_ok))
@@ -474,10 +477,10 @@ class DBThread(KillableThread):
                 self.wrapper(self.sync_dummy_tags)
                 self.wait(DB_POLL_PERIOD)
             except KeyboardInterrupt:
-                dbg("DB thread stopped");
+                self.dbg("stopped");
                 break;
             except BaseException as e:
-                dbg(str(e))
+                self.dbg(str(e))
             except:
                 pass
             finally:
