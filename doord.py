@@ -401,12 +401,16 @@ class DBThread(KillableThread):
     # Can be safely called from other threads
     def query_override(self, tag, match=""):
         def queryfn(cur):
+            def is_open_evening():
+                now = datetime.datetime.now()
+                if (now.weekday() == 1) and (now.hour >= 17):
+                    return True
+                if (now.month == 4) and (now.day == 12) and (now.hour >= 11) and (now.hour < 16):
+                    return True
+                return False
             if tag == '!#':
                 # Magic hack for Tuesday open evenings.
-                now = datetime.datetime.now()
-                if (now.weekday() != 1) or (now.hour < 17):
-                    return False
-                return self.space_open_state
+                return is_open_evening() and self.space_open_state
             if tag[0] == '!':
                 # OTP
                 t = int(time.time())
