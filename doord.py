@@ -272,6 +272,7 @@ class DBThread(KillableThread):
                 if old_state and not new_state:
                     self.space_open_state = False
                     self.g.irc.send("The space is closed")
+                    self.g.hifi.cmd("stop")
             else:
                 # Somebody here
                 if not old_state:
@@ -927,6 +928,48 @@ class DoorMonitor(KillableThread):
             finally:
                 self.release()
 
+class HifiMonitor(KillableThread):
+    def __init__(self, g):
+        super(HifiMonitor, self).__init__()
+        self.g = g
+        self.pending = None
+
+    def dbg(self, msg):
+        dbg("hifi: %s" % (msg))
+
+    # Can be called from other threads
+    def cmd(self, cmd):
+        self.acquire()
+        self.pending = cmd
+        self.notify()
+        self.release()
+
+    def run(self):
+        while True:
+            self.acquire()
+            try:
+                self.check_kill()
+                if self.pending is None:
+                    self.wait()
+                else:
+                    cmd = self.pending
+                    self.pending = None
+                    self.release()
+                    try:
+                        self.dbg(cmd)
+                        os.system("/usr/bin/mpc -h wifihifi %s" % cmd)
+                    finally:
+                        self.acquire()
+            except KeyboardInterrupt:
+                self.dbg("Stopped")
+                break
+            except BaseException as e:
+                dbg(str(e))
+            except:
+                pass
+            finally:
+                self.release()
+
 class IRCSpammer(KillableThread):
     def __init__(self, g):
         super(IRCSpammer, self).__init__()
@@ -967,7 +1010,7 @@ class IRCSpammer(KillableThread):
                 dbg("IRC thread stopped")
                 break
             except BaseException as e:
-                dbg(str(e))
+                dbg("irc:" + str(e))
             except:
                 pass
             finally:
@@ -1063,6 +1106,7 @@ class Globals(object):
         self.aux = AuxMonitor(self, "arduino")
         self.irc = IRCSpammer(self)
         self.arp = ARPMonitor(self)
+        self.hifi = HifiMonitor(self)
         self.cond = threading.Condition()
         self.triggers = []
 
@@ -1082,6 +1126,7 @@ class Globals(object):
         self.aux.start()
         self.irc.start()
         self.arp.start()
+        self.hifi.start()
         self.cond.acquire()
         try:
             while True:
@@ -1102,7 +1147,7 @@ class Globals(object):
                         except KeyboardInterrupt:
                             pass
                         except BaseException as e:
-                            dbg(str(e))
+                            dbg("main(%s): %s" % (fn, str(e)))
                         finally:
                             self.cond.acquire()
                 if deadline is not None:
@@ -1118,6 +1163,7 @@ class Globals(object):
             self.aux.kill()
             self.irc.kill()
             self.arp.kill()
+            self.hifi.kill()
 
 op = optparse.OptionParser()
 op.add_option("-d", "--debug", action="store_true", dest="debug", default=False)
