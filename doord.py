@@ -240,6 +240,7 @@ class DBThread(KillableThread):
     def update_space_state(self):
         def updatefn(cur):
             self.dbg("Running state update")
+            old_state = self.space_open_state
             # Expire temporarily hidden devices
             cur.execute( \
                 "UPDATE systems AS s" \
@@ -249,6 +250,12 @@ class DBThread(KillableThread):
                 "  (SELECT p.system FROM presence_deadline AS p" \
                 "   WHERE p.expires > now());")
             # Who is here?
+            # If the space is closed, then only look for RFID cards.
+            # If already open then also look for network devices.
+            if old_state:
+                extra_cond = ""
+            else:
+                extra_cond = " AND s.source = 'r'"
             cur.execute( \
                 "SELECT people.name" \
                 " FROM (systems AS s" \
@@ -259,9 +266,10 @@ class DBThread(KillableThread):
                 " WHERE s.hidden = 0" \
                 "  AND pd.expires > now()" \
                 "  AND people.member = 'YES'" \
-                " LIMIT 1;")
+                "  %s" \
+                " LIMIT 1;" \
+                % extra_cond)
             row = cur.fetchone();
-            old_state = self.space_open_state
             if row is None:
                 # Nobody here
                 # If the door is closed (or someone tagged out) then close the space
@@ -277,7 +285,6 @@ class DBThread(KillableThread):
                 # Somebody here
                 if not old_state:
                     # Open the space
-                    # TODO: Only open the space if somebody has also unlocked the door?
                     self.space_open_state = True
                     self.g.irc.send("The space is open! %s is here!" % row[0])
             if self.space_open_state != old_state:
