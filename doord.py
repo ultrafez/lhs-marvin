@@ -505,7 +505,7 @@ class DBThread(KillableThread):
                 self.wrapper(self.sync_dummy_tags)
                 self.wait(DB_POLL_PERIOD)
             except KeyboardInterrupt:
-                self.dbg("stopped");
+                self.dbg("Stopped");
                 break;
             except BaseException as e:
                 self.dbg(str(e))
@@ -1014,7 +1014,7 @@ class IRCSpammer(KillableThread):
                     finally:
                         self.acquire()
             except KeyboardInterrupt:
-                dbg("IRC thread stopped")
+                dbg("irc: Stopped")
                 break
             except BaseException as e:
                 dbg("irc:" + str(e))
@@ -1099,7 +1099,7 @@ class ARPMonitor(KillableThread):
                     self.release()
                 self.ping_all(pending)
             except KeyboardInterrupt:
-                self.dbg("stopped")
+                self.dbg("Stopped")
                 break;
             except BaseException as e:
                 self.dbg(str(e))
@@ -1107,15 +1107,21 @@ class ARPMonitor(KillableThread):
 class Globals(object):
     def __init__(self, config):
         self.config = config
-        self.dbt = DBThread(self)
-        self.door_up = DoorMonitor("door_up")
-        self.door_down = DoorMonitor("door_down")
-        self.aux = AuxMonitor(self, "arduino")
-        self.irc = IRCSpammer(self)
-        self.arp = ARPMonitor(self)
-        self.hifi = HifiMonitor(self)
         self.cond = threading.Condition()
         self.triggers = []
+        self.threads = []
+        self.dbt = self.add_thread(DBThread(self))
+        self.door_up = self.add_thread(DoorMonitor("door_up"))
+        self.door_down = self.add_thread(DoorMonitor("door_down"))
+        self.aux = self.add_thread(AuxMonitor(self, "arduino"))
+        self.irc = self.add_thread(IRCSpammer(self))
+        self.arp = self.add_thread(ARPMonitor(self))
+        self.hifi = self.add_thread(HifiMonitor(self))
+
+    def add_thread(self, t):
+        self.threads.append(t)
+        t.daemon = True
+        return t
 
     # Run a function from the main thread with no locks held
     def schedule(self, fn, delay=0):
@@ -1127,15 +1133,10 @@ class Globals(object):
     def run(self):
         # Start all the worker threads
         dbg("Starting threads");
-        self.dbt.start()
-        self.door_up.start()
-        self.door_down.start()
-        self.aux.start()
-        self.irc.start()
-        self.arp.start()
-        self.hifi.start()
-        self.cond.acquire()
+        for t in self.threads:
+            t.start()
         try:
+            self.cond.acquire()
             while True:
                 now = time.time()
                 deadline = now  + SERIAL_POLL_PERIOD
@@ -1162,15 +1163,13 @@ class Globals(object):
         except KeyboardInterrupt:
             pass
         finally:
-            dbg("Exiting")
+            dbg("Stopping threads")
             self.cond.release()
-            self.door_up.kill()
-            self.door_down.kill()
-            self.dbt.kill()
-            self.aux.kill()
-            self.irc.kill()
-            self.arp.kill()
-            self.hifi.kill()
+            for t in self.threads:
+                t.kill()
+            for t in self.threads:
+                t.join(30)
+            dbg("Exiting")
 
 op = optparse.OptionParser()
 op.add_option("-d", "--debug", action="store_true", dest="debug", default=False)
