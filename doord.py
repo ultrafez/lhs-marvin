@@ -59,6 +59,9 @@ IRC_TIMEOUT = 30
 ARP_SCAN_INTERVAL = 60
 # RFID tags keep the space open for 15 minutes
 RFID_SCAN_LIFETIME = 15 * 60
+# Also keep network devices for 15 minutes, so rebooting a machine doesn't
+# cause it to disappear
+ARP_LIFETIME = 15 * 60
 
 debug_lock = threading.Lock()
 
@@ -355,7 +358,7 @@ class DBThread(KillableThread):
         if source == 'r':
             lifetime = RFID_SCAN_LIFETIME
         else:
-            lifetime = int(ARP_SCAN_INTERVAL * 2.5)
+            lifetime = ARP_LIFETIME
         cur.execute( \
             "REPLACE INTO presence_deadline" \
             " SELECT id, now() + interval %d second" \
