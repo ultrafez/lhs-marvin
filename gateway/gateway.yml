@@ -1,0 +1,9 @@
+---
+- name: gateway
+  hosts: localhost
+  sudo: yes
+  tasks:
+  - name: NTP
+    apt: pkg=ntp
+  - name: Useful stuff
+    apt: pkg=tree,dstat,less,vim,bash-completion
