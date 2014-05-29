@@ -2,7 +2,8 @@
 
 set -e
 
-set -e
+tags=""
+test -n "$1" && tags="--tags=$1"
 
-git fetch
-ansible-playbook -i hosts gateway.yml
+git pull
+ansible-playbook -i hosts gateway.yml $tags
