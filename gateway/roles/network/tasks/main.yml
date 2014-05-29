@@ -1,0 +1,19 @@
+---
+- copy: src=config/interfaces dest=/etc/network/interfaces
+- copy: src=initscripts/firewall dest=/etc/init.d/
+  notify: restart firewall
+- copy: src=initscripts/firewall6 dest=/etc/init.d/
+  notify: restart firewall
+- service: name=firewall enabled=true
+- service: name=firewall6 enabled=true
+
+- apt: pkg=isc-dhcp-server
+- copy: src=config/dhcpd.conf dest=/etc/dhcp/dhcpd.conf
+  notify: restart dhcp
+
+- apt: pkg=bind9,resolvconf
+- copy: src=config/bind/ dest=/etc/bind/
+  notify: restart bind
+- copy: src=config/default-bind dest=/etc/default/bind9 
+  notify: restart bind
+

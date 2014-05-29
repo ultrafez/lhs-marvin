@@ -1,0 +1,9 @@
+- name: NTP
+  apt: pkg=ntp
+- apt: pkg=vlan,iproute
+- name: Useful stuff
+  apt: pkg=tree,dstat,less,vim,bash-completion
+- apt: pkg=screen
+- copy: src=config/screenrc dest=/etc/screenrc
+
+

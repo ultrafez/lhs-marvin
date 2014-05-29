@@ -1,0 +1,23 @@
+# Give usb serial ports meaningful names
+
+ACTION!="add|change", GOTO="usb_tty_end"
+SUBSYSTEM!="tty", GOTO="usb_tty_end"
+
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", GOTO="usb_tty_ftdi"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", GOTO="usb_tty_cp210"
+
+GOTO="usb_tty_end"
+
+LABEL="usb_tty_ftdi"
+
+SYMLINK+="arduino"
+
+GOTO="usb_tty_end"
+
+LABEL="usb_tty_cp210"
+
+KERNELS=="*1:1.0", SYMLINK+="door_down"
+KERNELS=="*2:1.0", SYMLINK+="door_up"
+
+LABEL="usb_tty_end"
+

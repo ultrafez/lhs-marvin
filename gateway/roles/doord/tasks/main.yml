@@ -1,0 +1,10 @@
+---
+- name: doord-script
+  copy: src=../doord.py dest=/usr/local/bin/
+  notify: restart doord
+- copy: src=config/marvin.conf dest=/etc/marvin.conf force=no
+  notify: restart doord
+- copy: src=initscripts/doord dest=/etc/init.d/
+  notify: restart doord
+- copy: src=config/logrotate-doord dest=/etc/logrotate.d/doord
+- service: name=doord enabled=true

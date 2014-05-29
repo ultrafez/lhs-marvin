@@ -1,0 +1,8 @@
+---
+- name: restart dhcp
+  service: name=isc-dhcp-server state=restarted
+- name: restart bind
+  service: name=bind9 state=restarted
+- name: restart firewall
+  service: name=firewall state=restarted
+  service: name=firewall6 state=restarted

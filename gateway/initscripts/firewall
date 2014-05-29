@@ -1,0 +1,101 @@
+#!/bin/sh
+# IPTables firewall startup script
+# Lots of hardcoded evilness.
+### BEGIN INIT INFO
+# Provides:          firewall
+# Required-Start:    networking
+# Required-Stop:     networking
+# Default-Start:     S
+# Default-Stop:      0 6
+# Short-Description: configure firewall (for NAT)
+### END INIT INFO
+
+
+INTINT="eth-green"
+INTADDR="172.31.26.1"
+
+EXTINT="eth-red"
+EXTADDR="192.168.0.254"
+
+WLANINT="vlan101"
+WLANADDR="172.31.27.11"
+
+IPT=/sbin/iptables
+
+# Flush any previous rules
+$IPT -F
+$IPT -t nat -F
+$IPT -t mangle -F
+
+# Change packet addresses to the internet address
+#
+$IPT -t nat -A POSTROUTING -o $EXTINT -j SNAT --to $EXTADDR
+
+# ICMP
+#
+$IPT -A INPUT -p icmp -j ACCEPT
+
+$IPT -A INPUT -p ipv6 -j ACCEPT
+
+# Local traffic
+#
+$IPT -A INPUT -i lo -j ACCEPT
+
+# Incoming SSH
+# 
+$IPT -A INPUT -p tcp --dport 22 -j ACCEPT
+
+# Incoming http for status page
+# 
+$IPT -A INPUT -p tcp --dport 80 -j ACCEPT
+
+# SIP Phone
+# 
+$IPT -A INPUT -p tcp --dport 5060 -j ACCEPT
+$IPT -A INPUT -p udp --dport 5060 -j ACCEPT
+
+# Incoming for webcams
+# 
+$IPT -A INPUT -p tcp --dport 8081 -j ACCEPT
+$IPT -A INPUT -p tcp --dport 8082 -j ACCEPT
+
+# VPN traffic
+$IPT -A INPUT -i tun+ -j ACCEPT
+
+# sipgate.co.uk
+#FIXME: this looks wrong
+#$IPT -A INPUT -p udp -s 217.10.79.23/24 -j ACCEPT
+
+# Accept packets from established or related connections.
+#
+#$IPT -A INPUT -m state --state INVALID -j LOG
+$IPT -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Accept all new connections from the LAN, and secure wireless.
+
+$IPT -A INPUT -m state --state NEW -i $INTINT -j ACCEPT
+$IPT -A INPUT -m state --state NEW -i $WLANINT -j ACCEPT
+
+# Don't break DHCP
+$IPT -A INPUT -i $WLANINT -p udp --dport 67:68 --sport 67:68 -j ACCEPT
+
+# If they were not accepted from above rules, drop them.
+#
+$IPT -P INPUT DROP
+
+# Forwarding
+#
+#External access from secure wireless
+$IPT -A FORWARD -i $WLANINT -o $EXTINT -j ACCEPT
+$IPT -A FORWARD -o $WLANINT -i $EXTINT -j ACCEPT
+#External access from wired network
+$IPT -A FORWARD -i $INTINT -o $EXTINT -j ACCEPT
+$IPT -A FORWARD -o $INTINT -i $EXTINT -j ACCEPT
+#Internal access from secure wireless
+$IPT -A FORWARD -i $WLANINT -o $INTINT -j ACCEPT
+$IPT -A FORWARD -o $WLANINT -i $INTINT -j ACCEPT
+#Don't forward external-external traffic
+$IPT -A FORWARD -o $EXTINT -i $EXTINT -j REJECT
+
+$IPT -P FORWARD DROP
+

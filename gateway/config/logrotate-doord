@@ -1,0 +1,10 @@
+# doord logrotate configuration file
+
+/var/log/doord.log {
+    rotate 9
+    daily
+    delaycompress
+    compress
+    missingok
+}
+

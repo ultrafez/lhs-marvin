@@ -1,0 +1,32 @@
+#!/bin/sh
+# IPTables IPv6 firewall startup script
+# Lots of hardcoded evilness.
+### BEGIN INIT INFO
+# Provides:          firewall6
+# Required-Start:    networking
+# Required-Stop:     networking
+# Default-Start:     S
+# Default-Stop:      0 6
+# Short-Description: configure firewall (for NAT)
+### END INIT INFO
+
+IPT6="/sbin/ip6tables"
+EXTIF="he-ipv6"
+INTIF="eth1"
+WLANIF="vlan101"
+echo "Starting IPv6 firewall..."
+$IPT6 -F
+$IPT6 -X
+$IPT6 -t mangle -F
+$IPT6 -t mangle -X
+
+# DROP all unclassified traffic
+$IPT6 -P INPUT DROP
+$IPT6 -P OUTPUT DROP
+$IPT6 -P FORWARD DROP
+
+# Allow loopback traffic
+
+$IPT6 -A INPUT -i lo -j ACCEPT
+$IPT6 -A OUTPUT -o lo -j ACCEPT
+

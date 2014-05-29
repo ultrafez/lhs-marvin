@@ -1,0 +1,8 @@
+#! /bin/sh
+
+# Delete motion capture files after a month
+
+for d in /var/wwwcamera/camera-? ; do
+  ionice -c3 find $d -type f -daystart -mtime +31 -not -name '*-snapshot.jpg' -delete
+  ionice -c3 find $d -type d -empty -delete
+done

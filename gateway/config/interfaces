@@ -2,48 +2,35 @@
 # and how to activate them. For more information, see interfaces(5).
 
 # The loopback network interface
-auto lo eth0 eth1 vlan101 vlan102
+auto lo eth-green eth-red vlan101
 iface lo inet loopback
 
 # The primary network interface
 allow-hotplug eth0
 
-iface eth0 inet static
+iface eth-red inet static
 	address	192.168.0.254
 	netmask	255.255.255.0
 	gateway 192.168.0.1
 
-iface eth0 inet6 static
-	address 2001:470:974b:0::1
-	netmask 64
+#iface eth-red inet6 static
+#	address 2001:470:974b:0::1
+#	netmask 64
 
-iface eth1 inet static
+iface eth-green inet static
 	address 172.31.26.1
 	netmask 255.255.255.0
+	dns-search hackspace
 
-iface eth1 inet6 static
-	address 2001:470:974b:1::1
-	netmask 64
+#iface eth-green inet6 static
+#	address 2001:470:974b:1::1
+#	netmask 64
 
 iface vlan101 inet static
 	address 172.31.27.1
 	netmask 255.255.255.0
-	vlan_raw_device eth1
+	vlan_raw_device eth-green
 
-iface vlan101 inet6 static
-	address 2001:470:974b:2::1
-	netmask 64
-
-iface vlan102 inet static
-	address 10.0.0.1
-	netmask 255.255.255.0
-	vlan_raw_device eth1
-
-iface vlan666 inet static
-	address 192.168.100.1
-	netmask 255.255.255.0
-	vlan_raw_device eth1
-
-iface vlan102 inet6 static
-	address 2001:470:974b:3::1
-	netmask 64
+#iface vlan101 inet6 static
+#	address 2001:470:974b:2::1
+#	netmask 64
