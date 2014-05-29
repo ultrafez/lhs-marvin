@@ -1,0 +1,4 @@
+---
+- apt: pkg=hddtemp,lm-sensors
+- apt: pkg=munin,munin-node,munin-doc
+- copy: src=config/munin.conf dest=/etc/munin/munin.conf

@@ -1,4 +1,6 @@
 ---
+- name: Python and libraries
+  apt: pkg=python3,python-serial,python-setproctitle,python-daemon,python-mysqldb
 - name: doord-script
   copy: src=../doord.py dest=/usr/local/bin/
   notify: restart doord

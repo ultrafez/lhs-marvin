@@ -1,0 +1,9 @@
+---
+- apt: pkg=motion
+- file: path=/var/www/camera state=directory
+    owner=motion group=motion mode=2775
+- copy: src=config/cleanup-camera dest=/etc/cron.daily/
+- copy: src=config/default-motion dest=/etc/default/motion
+  notify: restart motion
+- copy: src=config/motion/ dest=/etc/motion/
+  notify: restart motion

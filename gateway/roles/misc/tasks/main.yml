@@ -5,5 +5,5 @@
   apt: pkg=tree,dstat,less,vim,bash-completion
 - apt: pkg=screen
 - copy: src=config/screenrc dest=/etc/screenrc
-
-
+# Requires ansible 1.6
+#- alternatives: name=editor path=/usr/bin/vim.basic

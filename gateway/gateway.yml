@@ -4,39 +4,9 @@
   connection: local
   sudo: yes
   roles:
-  - network
-  - helpful
-  - doord
-
-  tasks:
-  - apt: pkg=mysql-client,mysql-server
-
-  - name: Python and libraries
-    apt: pkg=python3,python-serial,python-setproctitle,python-daemon,python-mysqldb
-
-  - apt: pkg=openvpn
-  - copy: src=config/openvpn-www.conf dest=/etc/openvpn/
-  - copy: src=secret/openvpn/ dest=/etc/openvpn/
-
-  - apt: pkg=apache2,libapache2-mod-php5,php5-mysql
-  - copy: src=www/ dest=/var/www/
-    notify: restart apache
-
-  - apt: pkg=motion
-  - file: path=/var/www/camera state=directory
-      owner=motion group=motion mode=2775
-  - copy: src=config/cleanup-camera dest=/etc/cron.daily/
-  - copy: src=config/default-motion dest=/etc/default/motion
-    notify: restart motion
-  - copy: src=config/motion/ dest=/etc/motion/
-    notify: restart motion
-
-  - apt: pkg=hddtemp,lm-sensors
-  - apt: pkg=munin,munin-node,munin-doc
-  - copy: src=config/munin.conf dest=/etc/munin/munin.conf
-
-  handlers:
-  - name: restart apache
-    service: name=apache2 state=restarted
-  - name: restart motion
-    service: name=motion state=restarted
+  - {role: network, tags: network}
+  - {role: misc, tags: misc}
+  - {role: lamp, tags: lamp}
+  - {role: doord, tags: doord}
+  - {role: camera, tags: camera}
+  - {role: monitor, tags: monitor}

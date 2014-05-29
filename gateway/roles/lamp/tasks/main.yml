@@ -1,0 +1,7 @@
+---
+- apt: pkg=mysql-client,mysql-server
+
+- apt: pkg=apache2,libapache2-mod-php5,php5-mysql
+- copy: src=www/ dest=/var/www/
+  notify: restart apache
+

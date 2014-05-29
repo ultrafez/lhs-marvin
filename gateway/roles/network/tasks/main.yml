@@ -17,3 +17,7 @@
 - copy: src=config/default-bind dest=/etc/default/bind9 
   notify: restart bind
 
+- apt: pkg=openvpn
+- copy: src=config/openvpn-www.conf dest=/etc/openvpn/
+- copy: src=secret/openvpn/ dest=/etc/openvpn/
+
