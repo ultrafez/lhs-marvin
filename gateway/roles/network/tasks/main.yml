@@ -21,3 +21,7 @@
 - copy: src=config/openvpn-www.conf dest=/etc/openvpn/
 - copy: src=secret/openvpn/ dest=/etc/openvpn/
 
+- copy: src=secret/ssh/ dest=/etc/ssh/
+  notify: restart sshd
+- copy: src=config/sshd_config dest=/etc/ssh/sshd_config
+  notify: restart sshd

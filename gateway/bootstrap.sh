@@ -12,7 +12,7 @@ EOF
 apt-get update
 
 echo "Installing ansible and apt dependencies"
-apt-get -y install ansible python-apt aptitude git
+apt-get -y install ansible python-apt aptitude git task-ssh-server
 
 echo "checking out git repo"
 git clone $git_repo marvin
