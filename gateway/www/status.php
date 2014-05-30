@@ -45,5 +45,9 @@ $temp = array(
   );
 $state['sensors']['temperature'] = array($temp);
 
-print(json_encode($state));
-print("\n");
+
+header('Content-type: application/json');
+header('Access-Control-Allow-Origin: *');
+header('Cache-Control: no-cache');
+
+echo json_encode($state);
