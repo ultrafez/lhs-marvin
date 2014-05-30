@@ -10,3 +10,4 @@
   - {role: doord, tags: doord}
   - {role: camera, tags: camera}
   - {role: monitor, tags: monitor}
+  - {role: user, tags: user}

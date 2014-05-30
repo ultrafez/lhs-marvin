@@ -1,0 +1,5 @@
+---
+- user: name={{ item.key }}
+  with_dict: all_users
+- authorized_key: user={{ item.key }} key="{{ lookup('file', item.value.pubkey ) }}"
+  with_dict: all_users

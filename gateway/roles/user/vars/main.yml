@@ -1,0 +1,6 @@
+---
+all_users:
+  fligg:
+    pubkey: fligg.pub
+  pbrook:
+    pubkey: pbrook.pub
