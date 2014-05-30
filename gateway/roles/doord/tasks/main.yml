@@ -1,12 +1,13 @@
 ---
 - name: Python and libraries
   apt: pkg=python3,python-serial,python-setproctitle,python-daemon,python-mysqldb
+- apt: pkg=mpc
 - name: doord-script
-  copy: src=../doord.py dest=/usr/local/bin/
+  copy: src=../doord.py dest=/usr/local/bin/doord.py
   notify: restart doord
 - copy: src=config/marvin.conf dest=/etc/marvin.conf force=no
   notify: restart doord
-- copy: src=initscripts/doord dest=/etc/init.d/
+- copy: src=initscripts/doord dest=/etc/init.d/doord
   notify: restart doord
 - copy: src=config/logrotate-doord dest=/etc/logrotate.d/doord
 - service: name=doord enabled=true
