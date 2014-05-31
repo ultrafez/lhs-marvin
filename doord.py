@@ -138,7 +138,6 @@ class DBThread(KillableThread):
         self.g = g
         self.db_user = self.g.config.get("db", "user")
         self.db_passwd = self.g.config.get("db", "password")
-        self.db = None
         self.tags = []
         self.door_state = {}
         for k in port_door_map.values():
@@ -151,17 +150,19 @@ class DBThread(KillableThread):
 
     def wrapper(self, fn):
         self.acquire()
+        db = None
+        cursor = None
         try:
-            if self.db is None:
-                self.db = MySQLdb.connect(host="localhost", user=self.db_user,
-                        passwd=self.db_passwd, db="hackspace")
-            rc = fn(self.db.cursor())
-        except:
-            if self.db is not None:
-                self.db.close()
-            self.db = None
-            raise
+            # We used to use a persistent database connection.  However this has strange 
+            db = MySQLdb.connect(host="localhost", user=self.db_user,
+                    passwd=self.db_passwd, db="hackspace")
+            cursor = db.cursor()
+            rc = fn(cursor)
         finally:
+            if cursor is not None:
+                cursor.close()
+            if db is not None:
+                db.close()
             self.release()
         return rc
 
@@ -416,8 +417,15 @@ class DBThread(KillableThread):
                 now = datetime.datetime.now()
                 if (now.weekday() == 1) and (now.hour >= 17):
                     return True
-                if (now.month == 4) and (now.day == 12) and (now.hour >= 11) and (now.hour < 16):
-                    return True
+                cur.execute( \
+                    "SELECT *" \
+                    " FROM open_days" \
+                    " WHERE (start <= now()) AND (end > now())"
+                    " LIMIT 1;")
+                row = cur.fetchone()
+                dbg("%s" % (row is not None))
+                if row is not None:
+                    return True;
                 return False
             if tag == '!#':
                 # Magic hack for Tuesday open evenings.
