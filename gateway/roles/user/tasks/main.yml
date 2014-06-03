@@ -1,5 +1,5 @@
 ---
-- user: name={{ item.key }}
+- user: name={{ item.key }} groups="{{ item.value.groups }}"
   with_dict: all_users
 - authorized_key: user={{ item.key }} key="{{ lookup('file', item.value.pubkey ) }}"
   with_dict: all_users

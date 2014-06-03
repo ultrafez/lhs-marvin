@@ -11,3 +11,4 @@
   - {role: camera, tags: camera}
   - {role: monitor, tags: monitor}
   - {role: user, tags: user}
+  - {role: printer, tags: printer}

@@ -1,0 +1,5 @@
+---
+- apt: pkg=cups
+- copy: src=Dell_Color_Laser_5110cn.ppd dest=/etc/cups/ppd/
+- copy: src=config/cupsd.conf dest=/etc/cups/cupsd.conf
+- copy: src=config/printers.conf dest=/etc/cups/printers.conf

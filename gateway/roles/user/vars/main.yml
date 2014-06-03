@@ -2,5 +2,7 @@
 all_users:
   fligg:
     pubkey: fligg.pub
+    groups: lpadmin
   pbrook:
     pubkey: pbrook.pub
+    groups: sudo,lpadmin
