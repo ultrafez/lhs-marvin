@@ -13,7 +13,6 @@ $TTL	604800
 ;
 @	IN	NS	gateway.hackspace.
 1.26	IN	PTR	gateway.hackspace.
-2.26	IN	PTR	wifi-ap.hackspace.
 12.26	IN	PTR	wifihifi.hackspace.
 13.26	IN	PTR	tv.hackspace.
 15.26	IN	PTR	arcadecab.hackspace.
@@ -22,6 +21,7 @@ $TTL	604800
 18.26	IN	PTR	phone.hackspace.
 19.26	IN	PTR	3dprinter.hackspace.
 
+2.27	IN	PTR	wifi-ap.hackspace.
 
 100.26	IN	PTR	dns-26-100.hackspace.
 101.26	IN	PTR	dns-26-101.hackspace.

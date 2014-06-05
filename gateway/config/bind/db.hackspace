@@ -14,7 +14,6 @@ $TTL	604800
 @	IN	NS	gateway.hackspace.
 @	IN	A	172.31.26.1
 gateway	IN	A	172.31.26.1
-wifi-ap	IN	A	172.31.26.2
 wifihifi	IN	A	172.31.26.12
 tv	IN	A	172.31.26.13
 arcadecab	IN	A	172.31.26.15
@@ -22,6 +21,8 @@ nas	IN	A	172.31.26.16
 printer	IN	A	172.31.26.17
 phone	IN	A	172.31.26.18
 3dprinter	IN	A	172.31.26.19
+
+wifi-ap	IN	A	172.31.27.2
 
 dns-26-100	IN	A	172.31.26.100
 dns-26-101	IN	A	172.31.26.101
