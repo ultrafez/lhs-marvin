@@ -420,7 +420,7 @@ class DBThread(KillableThread):
                 cur.execute( \
                     "SELECT *" \
                     " FROM open_days" \
-                    " WHERE (start <= now()) AND (end > now())"
+                    " WHERE (start <= now()) AND (end > now())" \
                     " LIMIT 1;")
                 row = cur.fetchone()
                 dbg("%s" % (row is not None))
