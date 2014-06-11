@@ -1,5 +1,26 @@
 <?php
 include 'include/db.php';
+
+function open_public()
+{
+  $dow = (int)date("N");
+  $hour = (int)date("G");
+  if (($dow == 2) && ($hour >= 17)) {
+    return True;
+  }
+  $sql = 'SELECT *' .
+	' FROM open_days' .
+	' WHERE (start <= now()) AND (end > now())' .
+	' LIMIT 1;';
+  $r=mysql_query($sql);
+  $row = mysql_fetch_assoc($r);
+  if ($row) {
+    return True;
+  } else {
+    return False;
+  }
+}
+
 $state = array(
   'api' => '0.13',
   'space' => 'Leeds Hackspace',
@@ -32,8 +53,18 @@ $state = array(
 $sql="select * from prefs where ref='space-state';";
 $r=mysql_query($sql);
 $row = mysql_fetch_assoc($r);
-$ss = $row['value'];
-$state['state']['open'] = ($row['value'] == 0);
+$is_open = (int)$row['value'] == 0;
+$state['state']['open'] = $is_open;
+if ($is_open) {
+  if (open_public()) {
+    $msg = 'Open to All';
+  } else {
+    $msg = 'Open to Members';
+  }
+} else {
+  $msg = 'Closed';
+}
+$state['state']['message'] = $msg;
 
 $sql="select temperature from temperature limit 1;";
 $r=mysql_query($sql);
