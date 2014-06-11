@@ -38,16 +38,15 @@ case "$1" in
 	log_action_end_msg $?
 	;;
   stop)
-	log_action_begin_msg "Starting $NAME: "
-	echo -n "Stopping $DESC: "
+	log_action_begin_msg "Stopping $NAME: "
 	start-stop-daemon --stop --pidfile /var/run/$NAME.pid \
 		--oknodo --name $NAME
+	# Give the old process a few seconds to terminate
+	sleep 10
 	log_action_end_msg $?
 	;;
   restart|force-reload)
 	$0 stop
-	# Give the old process a few seconds to terminate before starting a new one
-	sleep 10
 	$0 start	
 	;;
   *)
