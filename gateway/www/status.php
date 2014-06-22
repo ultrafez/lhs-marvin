@@ -47,7 +47,10 @@ $state = array(
     'irc' => 'irc://freenode.net/#leeds-hack-space'
     ),
   'issue_report_channels' => array('twitter','issue_mail'),
-  'sensors' => array()
+  'sensors' => array(
+    'temperature'         => array(),
+    'people_now_present'  => array()
+    )
   );
 
 $sql="select * from prefs where ref='space-state';";
@@ -74,8 +77,23 @@ $temp = array(
   'unit' => '°C',
   'location' => 'Inside'
   );
-$state['sensors']['temperature'] = array($temp);
+$state['sensors']['temperature'][] = $temp;
 
+$sql="select total from people_count;";
+$r=mysql_query($sql);
+$row = mysql_fetch_assoc($r);
+$peoplecount = $row['total'];
+$state['sensors']['people_now_present']['value'] = $peoplecount;
+
+if ($peoplecount > 0) {
+  $sql="select name from people_list;";
+  $r=mysql_query($sql);
+  $people_list = array();
+  while ($row = mysql_fetch_assoc($r)) {
+    $people_list[] = $row['name'];
+  }
+  $state['sensors']['people_now_present']['names'] = $people_list;
+}
 
 header('Content-type: application/json');
 header('Access-Control-Allow-Origin: *');
