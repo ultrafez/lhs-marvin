@@ -1,4 +1,5 @@
 ---
+- copy: src=config/sysctl-network.conf dest=/etc/sysctl.d/network.conf
 - copy: src=config/interfaces dest=/etc/network/interfaces
 - copy: src=initscripts/firewall dest=/etc/init.d/
   notify: restart firewall
