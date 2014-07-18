@@ -958,16 +958,19 @@ class DoorMonitor(KillableThread):
             except KeyboardInterrupt:
                 # We use KeyboardInterrupt for thread termination
                 self.dbg("Stopped")
+                if self.ser is not None:
+                    CloseSerial(self.ser)
+                    self.ser = None
                 break
             except BaseException as e:
                 self.dbg(str(e))
-            except:
-                raise
-            finally:
                 if self.ser is not None:
                     CloseSerial(self.ser)
                     self.ser = None
                 self.sync = False
+            except:
+                raise
+            finally:
                 self.release()
 
 class HifiMonitor(KillableThread):
