@@ -7,3 +7,6 @@
 - copy: src=config/screenrc dest=/etc/screenrc
 # Requires ansible 1.6
 #- alternatives: name=editor path=/usr/bin/vim.basic
+# Apt auto-update
+- copy: src=config/apt-02periodic dest=/etc/apt/apt.conf.d/02periodic
+- apt: pkg=unattended-upgrades
