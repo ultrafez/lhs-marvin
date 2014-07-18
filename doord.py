@@ -19,6 +19,25 @@ import datetime
 import setproctitle
 import socket
 import subprocess
+import fcntl
+
+def OpenSerial(dev):
+    ser = serial.Serial(dev, 9600, timeout=SERIAL_POLL_PERIOD, writeTimeout=SERIAL_POLL_PERIOD)
+    try:
+        fcntl.flock(ser, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except:
+        ser.close()
+        raise
+    return ser
+
+def CloseSerial(ser):
+    if ser is None:
+        return
+    try:
+        fcntl.flock(ser, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except:
+        pass
+    ser.close()
 
 class PidFile(object):
     """Context manager that locks a pid file.  Implemented as class
@@ -671,7 +690,7 @@ class AuxMonitor(KillableThread):
         self.temp_trigger()
         while True:
             try:
-                self.ser = serial.Serial("/dev/" + self.port_name, 9600, timeout=SERIAL_POLL_PERIOD, writeTimeout=SERIAL_POLL_PERIOD)
+                self.ser = OpenSerial("/dev/" + self.port_name)
                 # Opening the port resets the arduino,
                 # which takes a few seconds to come back to life
                 self.delay(5);
@@ -691,12 +710,17 @@ class AuxMonitor(KillableThread):
                 self.dbg("Stopped")
                 break
             except BaseException as e:
-                if self.ser is not None:
-                    self.ser.close()
                 self.dbg(str(e))
             except:
                 raise
-            self.delay(SERIAL_PING_INTERVAL)
+            finally:
+                if self.ser is not None:
+                    CloseSerial(self.ser)
+                    self.ser = None
+            try:
+                self.delay(SERIAL_PING_INTERVAL)
+            except KeyboardInterrupt:
+                break
 
     # Called from other threads
     def update(self, servo=None):
@@ -799,7 +823,7 @@ class DoorMonitor(KillableThread):
     def resync(self):
         self.dbg("Resync")
         if self.ser is None:
-            self.ser = serial.Serial("/dev/" + self.port_name, 9600, timeout=SERIAL_POLL_PERIOD)
+            self.ser = OpenSerial("/dev/" + self.port_name)
             self.ser.write("X\n")
             # Wait for a 1s quiet period
             while self.ser.inWaiting():
@@ -936,14 +960,14 @@ class DoorMonitor(KillableThread):
                 self.dbg("Stopped")
                 break
             except BaseException as e:
-                if self.ser is not None:
-                    self.ser.close()
-                self.ser = None
-                self.sync = False
                 self.dbg(str(e))
             except:
                 raise
             finally:
+                if self.ser is not None:
+                    CloseSerial(self.ser)
+                    self.ser = None
+                self.sync = False
                 self.release()
 
 class HifiMonitor(KillableThread):
