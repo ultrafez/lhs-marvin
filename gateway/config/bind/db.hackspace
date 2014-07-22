@@ -23,6 +23,7 @@ phone	IN	A	172.31.26.18
 3dprinter	IN	A	172.31.26.19
 
 wifi-ap	IN	A	172.31.27.2
+cuboid	IN	A	172.31.27.3
 
 dns-26-100	IN	A	172.31.26.100
 dns-26-101	IN	A	172.31.26.101

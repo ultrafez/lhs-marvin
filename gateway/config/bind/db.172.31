@@ -22,6 +22,7 @@ $TTL	604800
 19.26	IN	PTR	3dprinter.hackspace.
 
 2.27	IN	PTR	wifi-ap.hackspace.
+3.27	IN	PTR	cuboid.hackspace.
 
 100.26	IN	PTR	dns-26-100.hackspace.
 101.26	IN	PTR	dns-26-101.hackspace.
