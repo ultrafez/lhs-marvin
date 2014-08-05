@@ -514,7 +514,7 @@ find_tag(const char *tag, char *pin)
 static void
 tag_scanout(const char *tag)
 {
-  if (find_tag(tag, last_pin) == -1)
+  if (!is_alive())
     return;
 
   if (pin_timeout || scanout_time)
