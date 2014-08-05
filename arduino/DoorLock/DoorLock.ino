@@ -11,7 +11,11 @@
 #define EEPROM_TAG_START 64
 #define EEPROM_TAG_END 1023
 #define DEBOUNCE_INTERVAL 100
+#if UNLOCK_PERIOD < 5000
 #define GREEN_PERIOD 5000
+#else
+#define GREEN_PERIOD UNLOCK_PERIOD
+#endif
 #define QUICKLOCK_INTERVAL 1000
 
 #define PIN_INTERVAL 10000
@@ -868,8 +872,13 @@ do_rfid(void)
 static void
 do_timer(void)
 {
-  if (time_after(relock_time) || time_after(quicklock_time))
+  if (time_after(relock_time))
     lock_door();
+  if (time_after(quicklock_time))
+    {
+      green_time = 0;
+      lock_door();
+    }
 
   if (time_after(green_time))
     green_time = 0;
