@@ -4,7 +4,7 @@ ARDUINO_PORT = /dev/ttyACM0
 
 ifeq (1, 1)
 RESET_CMD = /bin/true
-ARDUINO_PORT = usb
+ARD_PORT = usb
 BOARD_TAG = eightmeg
 BOARDS_TXT=$(ARDUINO_SKETCHBOOK)/hardware/misc/boards.txt
 ARDUINO_VAR_PATH=$(ARDUINO_SKETCHBOOK)/hardware/misc/variants
