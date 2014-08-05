@@ -995,7 +995,6 @@ do_keypad(void)
     return;
 
   last_char = c;
-  seen_kp = c;
   debounce_time = now;
 
   if (pin_pos)
@@ -1005,6 +1004,10 @@ do_keypad(void)
       else
 	pin_valid = false;
       pin_timeout = now_plus(PIN_INTERVAL);
+    }
+  else
+    {
+      seen_kp = c;
     }
 }
 
