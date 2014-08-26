@@ -6,3 +6,6 @@ all_users:
   pbrook:
     pubkey: pbrook.pub
     groups: sudo,lpadmin
+  ranyardm:
+    pubkey: ranyardm.pub
+    groups: lpadmin
