@@ -18,10 +18,12 @@
 #define SIGN 8
 #define INTERNALDOOR A3
 #define EXTERNALDOOR A2
-#define DOORBELL A1
+#define BELL 4
 
 #define SIGN_OFF 0
 #define SIGN_ON 1
+#define BELL_OFF 0
+#define BELL_ON 1
 
 char input[10];
 char last;
@@ -29,6 +31,7 @@ int count;
 Servo pan;
 int panangle=90;
 bool seen_ping;
+unsigned long bell_timer;
 
 void Write (void) {
   pinMode(9, OUTPUT);     
@@ -153,7 +156,9 @@ void setup()
   pinMode(LASER, OUTPUT);
   pinMode(INTERNALDOOR, INPUT_PULLUP);
   pinMode(SIGN, OUTPUT);
+  pinMode(BELL, OUTPUT);
   digitalWrite(SIGN, SIGN_OFF);
+  digitalWrite(BELL, BELL_OFF);
   FireLaser(10);
   pan.attach(PANSERVO);
   pan.write(panangle);
@@ -164,6 +169,14 @@ void setup()
 
 void loop()                     
 { 
+  long delta;
+  if (bell_timer) {
+    delta = bell_timer - millis();
+    if (delta < 0) {
+      digitalWrite(BELL, BELL_OFF);
+      bell_timer = 0;
+    }
+  }
   if (Serial.available() > 0)
   {
     last=Serial.read();
@@ -262,6 +275,11 @@ void loop()
           break;
 	case 'S':
 	  digitalWrite(SIGN, (input[1] == '1') ? SIGN_ON : SIGN_OFF);
+	  Serial.println("OK");
+	  break;
+	case 'B':
+	  digitalWrite(BELL, BELL_ON);
+      bell_timer = atoi(&input[1])*1000+millis();
 	  Serial.println("OK");
 	  break;
 	case 'X':
