@@ -601,6 +601,7 @@ class AuxMonitor(KillableThread):
         self.servo_override_pos = None
         self.servo_override_time = None
         self.temp_due = True
+        self.bell_duration = None
         self.g = g
 
     def dbg(self, msg):
@@ -664,6 +665,11 @@ class AuxMonitor(KillableThread):
                 raise Exception("Bad temperature response")
             self.g.dbt.record_temp(int(r[5:]))
 
+    def sync_bell(self):
+        if self.bell_duration is not None:
+            self.do_cmd_expect("B%d" % self.bell_duration, "OK", "Failed to ring the bell")
+            self.bell_duration = None
+
     def resync(self):
         self.dbg("Full resync")
         self.need_sync = True
@@ -682,6 +688,7 @@ class AuxMonitor(KillableThread):
             self.sync_sign()
             self.sync_servo()
             self.sync_temp()
+            self.sync_bell()
             self.need_sync = False
             while not self.need_sync:
                 self.wait()
@@ -732,6 +739,13 @@ class AuxMonitor(KillableThread):
             self.notify()
             self.release()
         self.g.schedule(updatefn)
+
+    # Called from other threads
+    def bell_trigger(self, duration):
+        self.acquire()
+        self.bell_duration = duration
+        self.update()
+        self.release()
 
     # Called from other threads
     def servo_override(self, angle):
@@ -920,7 +934,9 @@ class DoorMonitor(KillableThread):
             self.seen_kp = None
             if c == '*':
                 g.dbt.seen_star(self.port_name)
-            elif c != '#':
+            elif c == '#':
+                g.aux.bell_trigger(2)
+            else
                 c = self.otp + c;
                 self.otp = c
                 self.otp_expires = time.time() + 60
