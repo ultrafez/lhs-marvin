@@ -936,7 +936,7 @@ class DoorMonitor(KillableThread):
                 g.dbt.seen_star(self.port_name)
             elif c == '#':
                 g.aux.bell_trigger(2)
-            else
+            else:
                 c = self.otp + c;
                 self.otp = c
                 self.otp_expires = time.time() + 60
