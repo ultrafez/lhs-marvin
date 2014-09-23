@@ -934,14 +934,14 @@ class DoorMonitor(KillableThread):
             self.seen_kp = None
             if c == '*':
                 g.dbt.seen_star(self.port_name)
-            elif c == '#':
-                g.aux.bell_trigger(2)
-            else:
+            elif c != '#':
                 c = self.otp + c;
                 self.otp = c
                 self.otp_expires = time.time() + 60
             if g.dbt.query_override('!' + c, self.otp):
                 self.remote_open = True
+            elif c == '#':
+                g.aux.bell_trigger(2)
         if self.remote_open:
             self.remote_open = False
             self.do_cmd_expect("U0", "A0", "Error doing remote open")
