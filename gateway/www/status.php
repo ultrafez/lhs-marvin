@@ -65,7 +65,7 @@ if ($is_open) {
     $msg = 'Open to Members';
   }
 } else {
-  $msg = 'Closed';
+  $msg = 'Empty';
 }
 $state['state']['message'] = $msg;
 
