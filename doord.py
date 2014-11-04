@@ -1159,19 +1159,23 @@ class Globals(object):
             while True:
                 with self.cond:
                     now = time.time()
-                    deadline = now + SERIAL_POLL_PERIOD
+                    deadline = None
                     triggers = self.triggers
                     self.triggers = []
                     expired = []
                     for (fn, timeout) in triggers:
                         if timeout > now:
                             self.triggers.append((fn, timeout))
-                            if timeout < deadline:
+                            if deadline is None or timeout < deadline:
                                 deadline = timeout
                         else:
                             expired.append(fn)
                     if len(expired) == 0:
-                        dbg("Waiting %g" % (deadline - now))
+                        if deadline is None:
+                            timeout = None
+                        else:
+                            timeout = deadline - now;
+                        dbg("Waiting %s" % (str(timeout)))
                         self.cond.wait(deadline - now)
                 for fn in expired:
                     try:
