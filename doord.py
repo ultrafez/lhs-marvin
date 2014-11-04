@@ -188,6 +188,7 @@ class DBThread(KillableThread):
 
     def schedule_wrapper(self, fn):
         def wrapperfn():
+            self.dbg("%s" % fn)
             self.wrapper(fn)
         self.g.schedule(wrapperfn)
 
@@ -1170,15 +1171,20 @@ class Globals(object):
                         else:
                             expired.append(fn)
                     if len(expired) == 0:
+                        dbg("Waiting %g" % (deadline - now))
                         self.cond.wait(deadline - now)
                 for fn in expired:
                     try:
+                        dbg("Running %s" % fn)
                         fn()
+                        dbg("Done")
                     except KeyboardInterrupt:
+                        dbg("Got kbint")
                         raise
                     except BaseException as e:
                         dbg("main(%s): %s" % (fn, str(e)))
         except KeyboardInterrupt:
+            dbg("Got kbint2")
             pass
         finally:
             dbg("Stopping threads")
