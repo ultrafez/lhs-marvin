@@ -221,7 +221,7 @@ class DBThread(KillableThread):
             " WHERE ref='webcam';")
         row = cur.fetchone()
         if row is not None:
-            self.g.aux.update(int(row[0]))
+            self.g.aux.set_servo(int(row[0]))
 
     # Read and update tag list from database
     def poll_tags(self, cur):
@@ -730,15 +730,21 @@ class AuxMonitor(KillableThread):
                 break
 
     # Called from other threads
-    def update(self, servo=None):
+    def update(self):
         def updatefn():
             self.acquire()
             self.need_sync = True;
-            if servo is not None:
-                self.servo_pos = servo
             self.notify()
             self.release()
         self.g.schedule(updatefn)
+
+    # Called from other threads
+    def set_servo(self, pos):
+        self.acquire()
+        if self.servo_pos != pos:
+            self.servo_pos = pos
+            self.update()
+        self.release()
 
     # Called from other threads
     def bell_trigger(self, duration):
