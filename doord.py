@@ -90,27 +90,29 @@ port_door_map = {"door_up" : "internaldoor",
 def dbg(msg):
     if do_debug:
         print msg
-    debug_lock.acquire()
     tstr = time.strftime("%Y-%m-%d %H:%M:%S")
-    log_fh = open("/var/log/doord.log", 'at')
-    log_fh.write("%s: %s\n" % (tstr, msg))
-    log_fh.close()
-    debug_lock.release()
+    with debug_lock:
+        with open("/var/log/doord.log", 'at') as log_fh:
+            log_fh.write("%s: %s\n" % (tstr, msg))
 
 class KillableThread(threading.Thread):
     def __init__(self):
         super(KillableThread, self).__init__()
         self._killed = False
         self._cond = threading.Condition()
-        self.acquire = self._cond.acquire
-        self.release = self._cond.release
         self.notify = self._cond.notify
+
+    def __enter__(self):
+        self._cond.acquire()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._cond.release()
+        return False
 
     def kill(self):
         self._killed = True
-        self._cond.acquire()
-        self._cond.notify()
-        self._cond.release()
+        with self:
+            self._cond.notify()
 
     def wait(self, timeout=None):
         self.check_kill()
@@ -168,22 +170,21 @@ class DBThread(KillableThread):
         dbg("dbt: %s" % (msg))
 
     def wrapper(self, fn):
-        self.acquire()
-        db = None
-        cursor = None
-        try:
-            # We used to use a persistent database connection.  However this has strange 
-            db = MySQLdb.connect(host="localhost", user=self.db_user,
-                    passwd=self.db_passwd, db="hackspace")
-            cursor = db.cursor()
-            rc = fn(cursor)
-        finally:
-            if cursor is not None:
-                cursor.close()
-            if db is not None:
-                db.close()
-            self.release()
-        return rc
+        with self:
+            db = None
+            cursor = None
+            try:
+                # We used to use a persistent database connection.  However this has strange 
+                db = MySQLdb.connect(host="localhost", user=self.db_user,
+                        passwd=self.db_passwd, db="hackspace")
+                cursor = db.cursor()
+                rc = fn(cursor)
+            finally:
+                if cursor is not None:
+                    cursor.close()
+                if db is not None:
+                    db.close()
+            return rc
 
     def schedule_wrapper(self, fn):
         def wrapperfn():
@@ -392,13 +393,13 @@ class DBThread(KillableThread):
         def add_macs(cur):
             for m in macs:
                 self.add_presence_entry(cur, m, 'e')
+            self.update_space_state();
         self.wrapper(add_macs)
-        self.update_space_state();
 
     # Can be safely called from other threads
     def check_bogon(self, mac, ip):
-        self.dbg("Checking bogon %s (%s)" % (mac, ip))
         def bogonfn(cur):
+            self.dbg("Checking bogon %s (%s)" % (mac, ip))
             cur.execute( \
                 "REPLACE INTO bogons (address, info)" \
                 " SELECT * FROM" \
@@ -409,7 +410,7 @@ class DBThread(KillableThread):
                 "   WHERE systems.mac = tmp.mac" \
                 "    AND systems.source = 'e');" \
                 % (mac, ip))
-        self.wrapper(bogonfn)
+        self.schedule_wrapper(bogonfn)
 
     def poll_space_open(self, cur):
         cur.execute( \
@@ -424,10 +425,8 @@ class DBThread(KillableThread):
 
     # Can be safely called from other threads
     def is_space_open(self):
-        self.acquire()
-        is_open = self.space_open_state
-        self.release()
-        return is_open
+        with self:
+            return self.space_open_state
 
     # Can be safely called from other threads
     def query_override(self, tag, match=""):
@@ -492,7 +491,7 @@ class DBThread(KillableThread):
                 "INSERT INTO environmental(temperature)" \
                 " VALUES (%d)" \
                 % (temp))
-        self.wrapper(tempfn)
+        self.schedule_wrapper(tempfn)
 
     # Can be safely called from other threads
     def set_door_state(self, port, state):
@@ -518,31 +517,26 @@ class DBThread(KillableThread):
 
     def sync_keys(self):
         self.dbg("Triggering key sync");
-        self.acquire()
-        try:
+        with self:
             self.g.door_up.set_keys(self._keylist(Tag.upstairs_ok))
             self.g.door_down.set_keys(self._keylist(Tag.downstairs_ok))
-        finally:
-            self.release()
 
     def run(self):
         while True:
-            self.acquire()
-            try:
-                self.wrapper(self.poll_space_open)
-                self.wrapper(self.poll_tags)
-                self.wrapper(self.poll_webcam)
-                self.wrapper(self.sync_dummy_tags)
-                self.wait(DB_POLL_PERIOD)
-            except KeyboardInterrupt:
-                self.dbg("Stopped");
-                break;
-            except BaseException as e:
-                self.dbg(str(e))
-            except:
-                pass
-            finally:
-                self.release()
+            with self:
+                try:
+                    self.wrapper(self.poll_space_open)
+                    self.wrapper(self.poll_tags)
+                    self.wrapper(self.poll_webcam)
+                    self.wrapper(self.sync_dummy_tags)
+                    self.wait(DB_POLL_PERIOD)
+                except KeyboardInterrupt:
+                    self.dbg("Stopped");
+                    break;
+                except BaseException as e:
+                    self.dbg(str(e))
+                except:
+                    pass
 
 def encode64(val):
     if val < 26:
@@ -651,11 +645,10 @@ class AuxMonitor(KillableThread):
             self.last_servo = newpos
 
     def temp_trigger(self):
-        self.acquire()
-        self.temp_due = True
-        self.update()
-        self.release()
-        self.g.schedule(self.temp_trigger, 60)
+        with self:
+            self.temp_due = True
+            self.update()
+            self.g.schedule(self.temp_trigger, 60)
 
     def sync_temp(self):
         if self.temp_due:
@@ -694,7 +687,8 @@ class AuxMonitor(KillableThread):
                 self.wait()
 
     def run(self):
-        self.temp_trigger()
+        with self:
+            self.temp_trigger()
         while True:
             try:
                 self.ser = OpenSerial("/dev/" + self.port_name)
@@ -707,11 +701,8 @@ class AuxMonitor(KillableThread):
                     while self.ser.inWaiting():
                         self.ser.read(1)
                     time.sleep(1)
-                try:
-                    self.acquire()
+                with self:
                     self.work()
-                finally:
-                    self.release()
             except KeyboardInterrupt:
                 # We use KeyboardInterrupt for thread termination
                 self.dbg("Stopped")
@@ -732,35 +723,31 @@ class AuxMonitor(KillableThread):
     # Called from other threads
     def update(self):
         def updatefn():
-            self.acquire()
-            self.need_sync = True;
-            self.notify()
-            self.release()
+            with self:
+                self.need_sync = True;
+                self.notify()
         self.g.schedule(updatefn)
 
     # Called from other threads
     def set_servo(self, pos):
-        self.acquire()
-        if self.servo_pos != pos:
-            self.servo_pos = pos
-            self.update()
-        self.release()
+        with self:
+            if self.servo_pos != pos:
+                self.servo_pos = pos
+                self.update()
 
     # Called from other threads
     def bell_trigger(self, duration):
-        self.acquire()
-        self.bell_duration = duration
-        self.update()
-        self.release()
+        with self:
+            self.bell_duration = duration
+            self.update()
 
     # Called from other threads
     def servo_override(self, angle):
-        self.acquire()
-        self.servo_override_pos = angle
-        self.servo_override_time = time.time() + 10
-        self.g.schedule(self.update, 10)
-        self.update()
-        self.release()
+        with self:
+            self.servo_override_pos = angle
+            self.servo_override_time = time.time() + 10
+            self.g.schedule(self.update, 10)
+            self.update()
 
 # Communicate with door locks.
 # For Protocol details see DoorLock.ino
@@ -788,12 +775,12 @@ class DoorMonitor(KillableThread):
         while c != '\n':
             self.check_kill()
             if not block:
-                self.release()
+                self._cond.release()
             try:
                 c = self.ser.read()
             finally:
                 if not block:
-                    self.acquire()
+                    self._cond.acquire()
             if c == "":
                 if block:
                     raise Exception("No response from %s" % self.port_name)
@@ -958,42 +945,39 @@ class DoorMonitor(KillableThread):
                 self.otp_expires = None
 
     def set_keys(self, keys):
-        self.acquire()
-        self.keys = keys[:]
-        self.sync = False
-        self.seen_event = True
-        self.release()
+        with self:
+            self.keys = keys[:]
+            self.sync = False
+            self.seen_event = True
 
     def run(self):
         while self.keys is None:
             self.delay(1)
         while True:
-            self.acquire()
-            try:
-                self.check_kill()
-                self.work()
-                timeout = 0.0
-                while not self.poll_event():
-                    timeout += SERIAL_POLL_PERIOD
-                    if timeout >= SERIAL_PING_INTERVAL:
-                            self.seen_event = True
-            except KeyboardInterrupt:
-                # We use KeyboardInterrupt for thread termination
-                self.dbg("Stopped")
-                if self.ser is not None:
-                    CloseSerial(self.ser)
-                    self.ser = None
-                break
-            except BaseException as e:
-                self.dbg(str(e))
-                if self.ser is not None:
-                    CloseSerial(self.ser)
-                    self.ser = None
-                self.sync = False
-            except:
-                raise
-            finally:
-                self.release()
+            with self:
+                try:
+                    self.check_kill()
+                    self.work()
+                    timeout = 0.0
+                    while not self.poll_event():
+                        timeout += SERIAL_POLL_PERIOD
+                        if timeout >= SERIAL_PING_INTERVAL:
+                                self.seen_event = True
+                except KeyboardInterrupt:
+                    # We use KeyboardInterrupt for thread termination
+                    self.dbg("Stopped")
+                    if self.ser is not None:
+                        CloseSerial(self.ser)
+                        self.ser = None
+                    break
+                except BaseException as e:
+                    self.dbg(str(e))
+                    if self.ser is not None:
+                        CloseSerial(self.ser)
+                        self.ser = None
+                    self.sync = False
+                except:
+                    raise
 
 class HifiMonitor(KillableThread):
     def __init__(self, g):
@@ -1006,27 +990,20 @@ class HifiMonitor(KillableThread):
 
     # Can be called from other threads
     def cmd(self, cmd):
-        self.acquire()
-        self.pending = cmd
-        self.notify()
-        self.release()
+        with self:
+            self.pending = cmd
+            self.notify()
 
     def run(self):
         while True:
-            self.acquire()
             try:
                 self.check_kill()
-                if self.pending is None:
-                    self.wait()
-                else:
+                with self:
+                    while self.pending is None:
+                        self.wait()
                     cmd = self.pending
                     self.pending = None
-                    self.release()
-                    try:
-                        self.dbg(cmd)
-                        os.system("/usr/bin/mpc -h wifihifi %s" % cmd)
-                    finally:
-                        self.acquire()
+                os.system("/usr/bin/mpc -h wifihifi %s" % cmd)
             except KeyboardInterrupt:
                 self.dbg("Stopped")
                 break
@@ -1034,8 +1011,6 @@ class HifiMonitor(KillableThread):
                 dbg(str(e))
             except:
                 pass
-            finally:
-                self.release()
 
 class IRCSpammer(KillableThread):
     def __init__(self, g):
@@ -1044,10 +1019,9 @@ class IRCSpammer(KillableThread):
         self.msgq = []
 
     def send(self, msg):
-        self.acquire()
-        self.msgq.append(msg)
-        self.notify()
-        self.release()
+        with self:
+            self.msgq.append(msg)
+            self.notify()
 
     def really_send(self, msg):
         address = (self.g.config.get("ircbot", "msghost"), self.g.config.get("ircbot", "msgport"))
@@ -1061,18 +1035,13 @@ class IRCSpammer(KillableThread):
 
     def run(self):
         while True:
-            self.acquire()
             try:
-                self.check_kill()
-                if len(self.msgq) == 0:
-                    self.wait()
-                else:
-                    s = self.msgq.pop(0);
-                    self.release()
-                    try:
-                        self.really_send(s)
-                    finally:
-                        self.acquire()
+                with self:
+                    self.check_kill()
+                    while len(self.msgq) == 0:
+                        self.wait()
+                    msg = self.msgq.pop(0);
+                self.really_send(msg)
             except KeyboardInterrupt:
                 dbg("irc: Stopped")
                 break
@@ -1080,8 +1049,6 @@ class IRCSpammer(KillableThread):
                 dbg("irc:" + str(e))
             except:
                 pass
-            finally:
-                self.release()
 
 class ARPMonitor(KillableThread):
     def __init__(self, g):
@@ -1095,15 +1062,14 @@ class ARPMonitor(KillableThread):
         dbg("arp: %s" % (msg))
 
     def scan_arp(self):
-        self.acquire()
-        try:
+        self.g.schedule(self.scan_arp, ARP_SCAN_INTERVAL)
+        with self:
             self.dbg("scanning table")
             new_ip = set()
             mac_map = {}
             new_mac = set()
-            f = open("/proc/net/arp")
-            # Skip header
-            try:
+            with open("/proc/net/arp") as f:
+                # Skip header
                 f.readline()
                 for l in f:
                     r = l.split()
@@ -1113,8 +1079,6 @@ class ARPMonitor(KillableThread):
                     if flags != '0x0' and mac != '00:00:00:00:00:00':
                         new_ip.add(ip)
                         mac_map[mac] = ip
-            finally:
-                f.close()
             missing_ip = self.current_ip - new_ip
             self.current_ip = new_ip
             if len(missing_ip) > 0:
@@ -1126,9 +1090,6 @@ class ARPMonitor(KillableThread):
             self.current_mac = new_mac
             for m in unseen_mac:
                 self.g.dbt.check_bogon(m, mac_map[m])
-        finally:
-            self.release()
-            self.g.schedule(self.scan_arp, ARP_SCAN_INTERVAL)
 
     def ping(self, ip):
         self.dbg("Pinging %s" % ip)
@@ -1149,20 +1110,19 @@ class ARPMonitor(KillableThread):
         self.g.schedule(self.scan_arp)
         while True:
             try:
-                self.acquire()
-                try:
+                with self:
                     pending = self.ping_pending
                     self.ping_pending = set()
                     if len(pending) == 0:
                         self.wait()
-                finally:
-                    self.release()
                 self.ping_all(pending)
             except KeyboardInterrupt:
                 self.dbg("Stopped")
                 break;
             except BaseException as e:
                 self.dbg(str(e))
+            except:
+                self.dbg("Wonky exception")
 
 class Globals(object):
     def __init__(self, config):
@@ -1185,10 +1145,9 @@ class Globals(object):
 
     # Run a function from the main thread with no locks held
     def schedule(self, fn, delay=0):
-        self.cond.acquire()
-        self.triggers.append((fn, time.time()+delay))
-        self.cond.notify()
-        self.cond.release()
+        with self.cond:
+            self.triggers.append((fn, time.time()+delay))
+            self.cond.notify()
 
     def run(self):
         # Start all the worker threads
@@ -1196,35 +1155,33 @@ class Globals(object):
         for t in self.threads:
             t.start()
         try:
-            self.cond.acquire()
             while True:
-                now = time.time()
-                deadline = now  + SERIAL_POLL_PERIOD
-                triggers = self.triggers
-                self.triggers = []
-                for (fn, timeout) in triggers:
-                    if timeout > now:
-                        self.triggers.append((fn, timeout))
-                        if timeout < deadline:
-                            deadline = timeout
-                    else:
-                        self.cond.release()
-                        deadline = None
-                        try:
-                            fn()
-                        except KeyboardInterrupt:
-                            pass
-                        except BaseException as e:
-                            dbg("main(%s): %s" % (fn, str(e)))
-                        finally:
-                            self.cond.acquire()
-                if deadline is not None:
-                    self.cond.wait(deadline - now)
+                with self.cond:
+                    now = time.time()
+                    deadline = now + SERIAL_POLL_PERIOD
+                    triggers = self.triggers
+                    self.triggers = []
+                    expired = []
+                    for (fn, timeout) in triggers:
+                        if timeout > now:
+                            self.triggers.append((fn, timeout))
+                            if timeout < deadline:
+                                deadline = timeout
+                        else:
+                            expired.append(fn)
+                    if len(expired) == 0:
+                        self.cond.wait(deadline - now)
+                for fn in expired:
+                    try:
+                        fn()
+                    except KeyboardInterrupt:
+                        raise
+                    except BaseException as e:
+                        dbg("main(%s): %s" % (fn, str(e)))
         except KeyboardInterrupt:
             pass
         finally:
             dbg("Stopping threads")
-            self.cond.release()
             for t in self.threads:
                 t.kill()
             for t in self.threads:
