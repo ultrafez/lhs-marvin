@@ -679,12 +679,18 @@ class AuxMonitor(KillableThread):
                 raise Exception("Marvin went AWOL")
             if r[10:] == "+":
                 self.resync()
+            self.dbg("Sign")
             self.sync_sign()
+            self.dbg("Servo")
             self.sync_servo()
+            self.dbg("Temperature")
             self.sync_temp()
+            self.dbg("Bell")
             self.sync_bell()
+            self.dbg("Done")
             self.need_sync = False
             while not self.need_sync:
+                self.dbg("Waiting")
                 self.wait()
 
     def run(self):
@@ -692,6 +698,7 @@ class AuxMonitor(KillableThread):
             self.temp_trigger()
         while True:
             try:
+                self.dbg("Opening serial port")
                 self.ser = OpenSerial("/dev/" + self.port_name)
                 # Opening the port resets the arduino,
                 # which takes a few seconds to come back to life
@@ -711,12 +718,15 @@ class AuxMonitor(KillableThread):
             except BaseException as e:
                 self.dbg(str(e))
             except:
+                self.dbg("Wonky exception")
                 raise
             finally:
+                self.dbg("Closing serial port")
                 if self.ser is not None:
                     CloseSerial(self.ser)
                     self.ser = None
             try:
+                self.dbg("Waiting")
                 self.delay(SERIAL_PING_INTERVAL)
             except KeyboardInterrupt:
                 break
