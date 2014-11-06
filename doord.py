@@ -170,6 +170,7 @@ class DBThread(KillableThread):
         dbg("dbt: %s" % (msg))
 
     def wrapper(self, fn):
+        self.dbg("%s" % fn)
         with self:
             db = None
             cursor = None
@@ -180,15 +181,16 @@ class DBThread(KillableThread):
                 cursor = db.cursor()
                 rc = fn(cursor)
             finally:
+                self.dbg("Finishing")
                 if cursor is not None:
                     cursor.close()
                 if db is not None:
                     db.close()
+                self.dbg("Wrapper done")
             return rc
 
     def schedule_wrapper(self, fn):
         def wrapperfn():
-            self.dbg("%s" % fn)
             self.wrapper(fn)
         self.g.schedule(wrapperfn)
 
@@ -524,20 +526,20 @@ class DBThread(KillableThread):
 
     def run(self):
         while True:
-            with self:
-                try:
-                    self.wrapper(self.poll_space_open)
-                    self.wrapper(self.poll_tags)
-                    self.wrapper(self.poll_webcam)
-                    self.wrapper(self.sync_dummy_tags)
+            try:
+                self.wrapper(self.poll_space_open)
+                self.wrapper(self.poll_tags)
+                self.wrapper(self.poll_webcam)
+                self.wrapper(self.sync_dummy_tags)
+                with self:
                     self.wait(DB_POLL_PERIOD)
-                except KeyboardInterrupt:
-                    self.dbg("Stopped");
-                    break;
-                except BaseException as e:
-                    self.dbg(str(e))
-                except:
-                    pass
+            except KeyboardInterrupt:
+                self.dbg("Stopped");
+                break;
+            except BaseException as e:
+                self.dbg(str(e))
+            except:
+                self.dbg("Wonky exception")
 
 def encode64(val):
     if val < 26:
