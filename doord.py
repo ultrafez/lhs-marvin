@@ -190,7 +190,6 @@ class DBThread(KillableThread):
                     db = MySQLdb.connect(host="localhost", user=self.db_user,
                             passwd=self.db_passwd, db="hackspace")
                     cursor = db.cursor()
-                    self.dbg("Wrapper %s" % fn)
                     rc = fn(self, cursor, *args, **kwargs)
                 finally:
                     if cursor is not None:
@@ -1227,9 +1226,7 @@ class Globals(object):
                         self.cond.wait(deadline - now)
                 for cl in expired:
                     try:
-                        dbg("Running %s" % cl)
                         cl()
-                        dbg("Done")
                     except KeyboardInterrupt:
                         dbg("Got kbint")
                         raise
