@@ -27,6 +27,10 @@ import setproctitle
 import socket
 import subprocess
 import fcntl
+import traceback
+
+def schedule(fn, *args, **kwargs):
+    g.schedule(fn, *args, **kwargs)
 
 def OpenSerial(dev):
     ser = serial.Serial(dev, 9600, timeout=SERIAL_POLL_PERIOD, writeTimeout=SERIAL_POLL_PERIOD)
@@ -176,30 +180,26 @@ class DBThread(KillableThread):
     def dbg(self, msg):
         dbg("dbt: %s" % (msg))
 
-    def wrapper(self, fn):
-        self.dbg("%s" % fn)
-        with self:
-            db = None
-            cursor = None
-            try:
-                # We used to use a persistent database connection.  However this has strange 
-                db = MySQLdb.connect(host="localhost", user=self.db_user,
-                        passwd=self.db_passwd, db="hackspace")
-                cursor = db.cursor()
-                rc = fn(cursor)
-            finally:
-                self.dbg("Finishing")
-                if cursor is not None:
-                    cursor.close()
-                if db is not None:
-                    db.close()
-                self.dbg("Wrapper done")
-            return rc
+    def dbwrapper(fn):
+        def _dbwrapper(self, *args, **kwargs):
+            with self:
+                db = None
+                cursor = None
+                try:
+                    # We used to use a persistent database connection.  However this has strange 
+                    db = MySQLdb.connect(host="localhost", user=self.db_user,
+                            passwd=self.db_passwd, db="hackspace")
+                    cursor = db.cursor()
+                    self.dbg("Wrapper %s" % fn)
+                    rc = fn(self, cursor, *args, **kwargs)
+                finally:
+                    if cursor is not None:
+                        cursor.close()
+                    if db is not None:
+                        db.close()
+                return rc
+        return _dbwrapper
 
-    def schedule_wrapper(self, fn):
-        def wrapperfn():
-            self.wrapper(fn)
-        self.g.schedule(wrapperfn)
 
     def _keylist(self, fn):
         k = []
@@ -208,6 +208,7 @@ class DBThread(KillableThread):
                 k.append(t.tag_id + ' ' + t.pin)
         return k
 
+    @dbwrapper
     def sync_dummy_tags(self, cur):
         # Create dummy system entries for RFID cards
         # Delete removed tags
@@ -225,6 +226,7 @@ class DBThread(KillableThread):
             "  WHERE s.source='r');")
 
     # Read and update webcam servo position from database
+    @dbwrapper
     def poll_webcam(self, cur):
         cur.execute( \
             "SELECT value" \
@@ -235,6 +237,7 @@ class DBThread(KillableThread):
             self.g.aux.set_servo(int(row[0]))
 
     # Read and update tag list from database
+    @dbwrapper
     def poll_tags(self, cur):
         changed = False
         try:
@@ -265,127 +268,129 @@ class DBThread(KillableThread):
         if changed:
             self.sync_keys()
 
-    def recent_tag_out(self):
+    def _recent_tag_out(self):
         if self.last_tag_out is None:
             return False
         return self.last_tag_out > time.time() - 60
 
+    @dbwrapper
+    def _really_update(self, cur):
+        self.dbg("Running state update")
+        old_state = self.space_open_state
+        # Expire temporarily hidden devices
+        cur.execute( \
+            "UPDATE systems AS s" \
+            " SET s.hidden=0" \
+            " WHERE s.hidden=2" \
+            "  AND s.id NOT IN" \
+            "  (SELECT p.system FROM presence_deadline AS p" \
+            "   WHERE p.expires > now());")
+        # Who is here?
+        # If the space is closed, then only look for RFID cards.
+        # If already open then also look for network devices.
+        if old_state:
+            extra_cond = ""
+        else:
+            extra_cond = " AND s.source = 'r'"
+        cur.execute( \
+            "SELECT people.name" \
+            " FROM (systems AS s" \
+            " INNER JOIN presence_deadline as pd"\
+            "  ON s.id = pd.system)" \
+            " INNER JOIN people" \
+            "  ON s.owner = people.id" \
+            " WHERE s.hidden = 0" \
+            "  AND pd.expires > now()" \
+            "  AND people.member = 'YES'" \
+            "  %s" \
+            " LIMIT 1;" \
+            % extra_cond)
+        row = cur.fetchone();
+        if row is None:
+            # Nobody here
+            # If the door is closed (or someone tagged out) then close the space
+            if self._recent_tag_out():
+                new_state = False
+            else:
+                new_state = self.door_state["internaldoor"]
+            if old_state and not new_state:
+                self.space_open_state = False
+                self.g.irc.send("The space is closed")
+                self.g.hifi.cmd("stop")
+        else:
+            # Somebody here
+            if not old_state:
+                # Open the space
+                self.space_open_state = True
+                self.g.irc.send("The space is open! %s is here!" % row[0])
+        if self.space_open_state != old_state:
+            if self.space_open_state:
+                state_val = 0
+            else:
+                state_val = 2
+            cur.execute( \
+                "UPDATE prefs" \
+                " SET value=%d" \
+                " WHERE ref = 'space-state';" \
+                % state_val)
+            self.g.aux.update()
+
     # Can be safely called from other threads
     def update_space_state(self):
-        def updatefn(cur):
-            self.dbg("Running state update")
-            old_state = self.space_open_state
-            # Expire temporarily hidden devices
-            cur.execute( \
-                "UPDATE systems AS s" \
-                " SET s.hidden=0" \
-                " WHERE s.hidden=2" \
-                "  AND s.id NOT IN" \
-                "  (SELECT p.system FROM presence_deadline AS p" \
-                "   WHERE p.expires > now());")
-            # Who is here?
-            # If the space is closed, then only look for RFID cards.
-            # If already open then also look for network devices.
-            if old_state:
-                extra_cond = ""
-            else:
-                extra_cond = " AND s.source = 'r'"
-            cur.execute( \
-                "SELECT people.name" \
-                " FROM (systems AS s" \
-                " INNER JOIN presence_deadline as pd"\
-                "  ON s.id = pd.system)" \
-                " INNER JOIN people" \
-                "  ON s.owner = people.id" \
-                " WHERE s.hidden = 0" \
-                "  AND pd.expires > now()" \
-                "  AND people.member = 'YES'" \
-                "  %s" \
-                " LIMIT 1;" \
-                % extra_cond)
-            row = cur.fetchone();
-            if row is None:
-                # Nobody here
-                # If the door is closed (or someone tagged out) then close the space
-                if self.recent_tag_out():
-                    new_state = False
-                else:
-                    new_state = self.door_state["internaldoor"]
-                if old_state and not new_state:
-                    self.space_open_state = False
-                    self.g.irc.send("The space is closed")
-                    self.g.hifi.cmd("stop")
-            else:
-                # Somebody here
-                if not old_state:
-                    # Open the space
-                    self.space_open_state = True
-                    self.g.irc.send("The space is open! %s is here!" % row[0])
-            if self.space_open_state != old_state:
-                if self.space_open_state:
-                    state_val = 0
-                else:
-                    state_val = 2
-                cur.execute( \
-                    "UPDATE prefs" \
-                    " SET value=%d" \
-                    " WHERE ref = 'space-state';" \
-                    % state_val)
-                self.g.aux.update()
-        self.schedule_wrapper(updatefn)
+        schedule(self._really_update)
+
+    @dbwrapper
+    def _really_log(self, cur, t, msg):
+        tstr = time.strftime("%Y-%m-%d %H:%M:%S", t)
+        self.dbg("LOG: %s %s" % (tstr, msg));
+        cur.execute( \
+                "INSERT INTO security (time, message)" \
+                " VALUES ('%s', '%s');" % (tstr, msg))
 
     # Can be safely called from other threads
     def log(self, t, msg):
-        tstr = time.strftime("%Y-%m-%d %H:%M:%S", t)
-        def logfn(cur):
-            self.dbg("LOG: %s %s" % (tstr, msg));
-            cur.execute( \
-                    "INSERT INTO security (time, message)" \
-                    " VALUES ('%s', '%s');" % (tstr, msg))
-        self.schedule_wrapper(logfn)
+        schedule(self._really_log, t, msg)
 
-    # Can be safely called from other threads
-    def do_tag_in(self, tag):
-        def tagfn(cur):
-            self.add_presence_entry(cur, tag, 'r')
-            cur.execute( \
-                "UPDATE (systems INNER JOIN rfid_tags" \
-                "  ON (systems.owner = rfid_tags.user_id))" \
-                " SET systems.hidden = 0" \
-                " WHERE rfid_tags.card_id = '%s' AND systems.hidden = 2;" \
-                % (tag))
-            self.update_space_state();
-        self.wrapper(tagfn)
+    # Called from other threads
+    @dbwrapper
+    def do_tag_in(self, cur, tag):
+        self._add_presence_entry(cur, tag, 'r')
+        cur.execute( \
+            "UPDATE (systems INNER JOIN rfid_tags" \
+            "  ON (systems.owner = rfid_tags.user_id))" \
+            " SET systems.hidden = 0" \
+            " WHERE rfid_tags.card_id = '%s' AND systems.hidden = 2;" \
+            % (tag))
+        self.update_space_state();
 
-    # Can be safely called from other threads
-    def do_tag_out(self, tag):
-        def tagfn(cur):
-            cur.execute( \
-                "UPDATE (systems INNER JOIN rfid_tags" \
-                "  ON (systems.owner = rfid_tags.user_id))" \
-                " SET systems.hidden = 2" \
-                " WHERE rfid_tags.card_id = '%s' AND systems.hidden = 0;" \
-                % (tag))
-            self.last_tag_out = time.time()
-            self.update_space_state();
-        self.wrapper(tagfn)
+    # Called from other threads
+    @dbwrapper
+    def do_tag_out(self, cur, tag):
+        cur.execute( \
+            "UPDATE (systems INNER JOIN rfid_tags" \
+            "  ON (systems.owner = rfid_tags.user_id))" \
+            " SET systems.hidden = 2" \
+            " WHERE rfid_tags.card_id = '%s' AND systems.hidden = 0;" \
+            % (tag))
+        self.last_tag_out = time.time()
+        self.update_space_state();
 
-    def seen_star(self, port):
-        def starfn(cur):
-            if port_door_map[port] != "internaldoor":
-                return
-            if not self.recent_tag_out():
-                return
-            self.dbg("Force-close")
-            # Force-close by temporarily ignoring all currently present devices
-            cur.execute( \
-                "UPDATE systems" \
-                " SET systems.hidden = 2" \
-                " WHERE systems.hidden = 0;")
-            self.update_space_state()
-        self.schedule_wrapper(starfn)
+    # Called from other threads
+    @dbwrapper
+    def seen_star(self, cur, port):
+        if port_door_map[port] != "internaldoor":
+            return
+        if not self._recent_tag_out():
+            return
+        self.dbg("Force-close")
+        # Force-close by temporarily ignoring all currently present devices
+        cur.execute( \
+            "UPDATE systems" \
+            " SET systems.hidden = 2" \
+            " WHERE systems.hidden = 0;")
+        self.update_space_state()
 
-    def add_presence_entry(self, cur, mac, source):
+    def _add_presence_entry(self, cur, mac, source):
         if source == 'r':
             lifetime = RFID_SCAN_LIFETIME
         else:
@@ -398,30 +403,30 @@ class DBThread(KillableThread):
             % (lifetime, source, mac))
 
 
-    # Can be safely called from other threads
-    def update_arp_entries(self, macs):
-        def add_macs(cur):
-            for m in macs:
-                self.add_presence_entry(cur, m, 'e')
-            self.update_space_state();
-        self.wrapper(add_macs)
+    # Called from other threads
+    @dbwrapper
+    def update_arp_entries(self, cur, macs):
+        for m in macs:
+            self.dbg("Mac %s" % m)
+            self._add_presence_entry(cur, m, 'e')
+        self.update_space_state();
 
-    # Can be safely called from other threads
-    def check_bogon(self, mac, ip):
-        def bogonfn(cur):
-            self.dbg("Checking bogon %s (%s)" % (mac, ip))
-            cur.execute( \
-                "REPLACE INTO bogons (address, info)" \
-                " SELECT * FROM" \
-                "  (SELECT '%s' as mac, '%s') AS tmp" \
-                " WHERE NOT EXISTS" \
-                "  (SELECT systems.mac" \
-                "   FROM systems" \
-                "   WHERE systems.mac = tmp.mac" \
-                "    AND systems.source = 'e');" \
-                % (mac, ip))
-        self.schedule_wrapper(bogonfn)
+    # Called from other threads
+    @dbwrapper
+    def check_bogon(self, cur, mac, ip):
+        self.dbg("Checking bogon %s (%s)" % (mac, ip))
+        cur.execute( \
+            "REPLACE INTO bogons (address, info)" \
+            " SELECT * FROM" \
+            "  (SELECT '%s' as mac, '%s') AS tmp" \
+            " WHERE NOT EXISTS" \
+            "  (SELECT systems.mac" \
+            "   FROM systems" \
+            "   WHERE systems.mac = tmp.mac" \
+            "    AND systems.source = 'e');" \
+            % (mac, ip))
 
+    @dbwrapper
     def poll_space_open(self, cur):
         cur.execute( \
             "SELECT *" \
@@ -439,104 +444,101 @@ class DBThread(KillableThread):
             return self.space_open_state
 
     # Can be safely called from other threads
-    def query_override(self, tag, match=""):
-        def queryfn(cur):
-            def is_open_evening():
-                now = datetime.datetime.now()
-                if (now.weekday() == 1) and (now.hour >= 17):
-                    return True
-                cur.execute( \
-                    "SELECT *" \
-                    " FROM open_days" \
-                    " WHERE (start <= now()) AND (end > now())" \
-                    " LIMIT 1;")
-                row = cur.fetchone()
-                dbg("%s" % (row is not None))
-                if row is not None:
-                    return True;
-                return False
-            if tag == '!#':
-                # Magic hack for Tuesday open evenings.
-                return is_open_evening() and self.space_open_state
-            if tag[0] == '!':
-                # OTP
-                t = int(time.time())
-                cur.execute( \
-                    "SELECT val" \
-                    " FROM otp_keys" \
-                    " where (expires > now());")
-                for row in cur.fetchall():
-                    val = row[0]
-                    if len(val) < 6:
-                        continue
-                    self.dbg("Matching '%s'/'%s'" % (val, match))
-                    if val == match[-len(val):]:
-                        self.dbg("Matched OTP key %s" % val)
-                        cur.execute( \
-                            "UPDATE otp_keys" \
-                            " SET expires = now() + interval 10 minute" \
-                            " WHERE (val = '%s')" \
-                            % val);
-                        return True
-                return False
-            else:
-                cur.execute( \
-                    "SELECT people.member" \
-                    " FROM people INNER JOIN rfid_tags" \
-                    " ON (people.id = rfid_tags.user_id)" \
-                    " WHERE (rfid_tags.card_id = '%s' and people.member = 'YES');" \
-                    % tag)
-                row = cur.fetchone()
-                if row is None:
-                    return False
-                return self.space_open_state
-            return False
-        return self.wrapper(queryfn)
-
-    # Can be safely called from other threads
-    def record_temp(self, temp):
-        def tempfn(cur):
-            self.dbg("Logging temperature %d" % temp)
+    @dbwrapper
+    def query_override(self, cur, tag, match=""):
+        def is_open_evening():
+            now = datetime.datetime.now()
+            if (now.weekday() == 1) and (now.hour >= 17):
+                return True
             cur.execute( \
-                "INSERT INTO environmental(temperature)" \
-                " VALUES (%d)" \
-                % (temp))
-        self.schedule_wrapper(tempfn)
+                "SELECT *" \
+                " FROM open_days" \
+                " WHERE (start <= now()) AND (end > now())" \
+                " LIMIT 1;")
+            row = cur.fetchone()
+            dbg("%s" % (row is not None))
+            if row is not None:
+                return True;
+            return False
+        if tag == '!#':
+            # Magic hack for Tuesday open evenings.
+            return is_open_evening() and self.space_open_state
+        if tag[0] == '!':
+            # OTP
+            t = int(time.time())
+            cur.execute( \
+                "SELECT val" \
+                " FROM otp_keys" \
+                " where (expires > now());")
+            for row in cur.fetchall():
+                val = row[0]
+                if len(val) < 6:
+                    continue
+                self.dbg("Matching '%s'/'%s'" % (val, match))
+                if val == match[-len(val):]:
+                    self.dbg("Matched OTP key %s" % val)
+                    cur.execute( \
+                        "UPDATE otp_keys" \
+                        " SET expires = now() + interval 10 minute" \
+                        " WHERE (val = '%s')" \
+                        % val);
+                    return True
+            return False
+        else:
+            cur.execute( \
+                "SELECT people.member" \
+                " FROM people INNER JOIN rfid_tags" \
+                " ON (people.id = rfid_tags.user_id)" \
+                " WHERE (rfid_tags.card_id = '%s' and people.member = 'YES');" \
+                % tag)
+            row = cur.fetchone()
+            if row is None:
+                return False
+            return self.space_open_state
+        return False
 
-    # Can be safely called from other threads
-    def set_door_state(self, port, state):
-        def doorfn(cur):
-            door_name = port_door_map[port]
-            if self.door_state[door_name] != state:
+    # Can be called from other threads
+    @dbwrapper
+    def record_temp(self, cur, temp):
+        self.dbg("Logging temperature %d" % temp)
+        cur.execute( \
+            "INSERT INTO environmental(temperature)" \
+            " VALUES (%d)" \
+            % (temp))
+
+    # Can be called from other threads
+    @dbwrapper
+    def set_door_state(self, cur, port, state):
+        door_name = port_door_map[port]
+        if self.door_state[door_name] != state:
+            if state:
+                state_name = "open"
+            else:
+                state_name = "closed"
+            cur.execute( \
+                "REPLACE INTO prefs"\
+                " VALUES ('%s','%s')" \
+                % (door_name, state_name))
+            self.door_state[door_name] = state
+            if door_name == "internaldoor":
                 if state:
-                    state_name = "open"
-                else:
-                    state_name = "closed"
-                cur.execute( \
-                    "REPLACE INTO prefs"\
-                    " VALUES ('%s','%s')" \
-                    % (door_name, state_name))
-                self.door_state[door_name] = state
-                if door_name == "internaldoor":
-                    if state:
-                        self.g.aux.servo_override(180)
-                    if not self.space_open_state:
-                        self.g.irc.send("Internal door %s" % state_name)
-            self.update_space_state();
-        self.wrapper(doorfn)
+                    self.g.aux.servo_override(180)
+                if not self.space_open_state:
+                    self.g.irc.send("Internal door %s" % state_name)
+        self.update_space_state();
 
     def sync_keys(self):
         self.dbg("Triggering key sync");
-        self.g.door_up.set_keys(self._keylist(Tag.upstairs_ok))
-        self.g.door_down.set_keys(self._keylist(Tag.downstairs_ok))
+        schedule(self.g.door_up.set_keys, self._keylist(Tag.upstairs_ok))
+        schedule(self.g.door_down.set_keys, self._keylist(Tag.downstairs_ok))
 
     def run(self):
         while True:
             try:
-                self.wrapper(self.poll_space_open)
-                self.wrapper(self.poll_tags)
-                self.wrapper(self.poll_webcam)
-                self.wrapper(self.sync_dummy_tags)
+                self.poll_space_open()
+                self.poll_tags()
+                self.poll_webcam()
+                self.sync_dummy_tags()
                 with self:
                     self.wait(DB_POLL_PERIOD)
             except KeyboardInterrupt:
@@ -660,7 +662,7 @@ class AuxMonitor(KillableThread):
         with self:
             self.temp_due = True
             self.update()
-            self.g.schedule(self.temp_trigger, 60)
+            self.g.schedule_delay(self.temp_trigger, 60)
 
     def sync_temp(self):
         if self.temp_due:
@@ -668,7 +670,7 @@ class AuxMonitor(KillableThread):
             r = self.do_cmd("T")
             if r[:5] != "TEMP=":
                 raise Exception("Bad temperature response")
-            self.g.dbt.record_temp(int(r[5:]))
+            schedule(self.g.dbt.record_temp, int(r[5:]))
 
     def sync_bell(self):
         if self.bell_duration is not None:
@@ -773,15 +775,16 @@ class AuxMonitor(KillableThread):
             with self:
                 self.servo_override_pos = angle
                 self.servo_override_time = time.time() + 10
-                self.g.schedule(self.update, 10)
+                self.g.schedule_delay(self.update, 10)
                 self.update()
         self.g.schedule(servo_overridefn)
 
 # Communicate with door locks.
 # For Protocol details see DoorLock.ino
 class DoorMonitor(KillableThread):
-    def __init__(self, port):
+    def __init__(self, g, port):
         super(DoorMonitor, self).__init__()
+        self.g = g
         self.port_name = port;
         self.ser = None
         self.seen_event = False
@@ -975,12 +978,10 @@ class DoorMonitor(KillableThread):
     # Called from other threads
     # keys will be used directly, and must not be modified later
     def set_keys(self, keys):
-        def set_keysfn():
-            with self:
-                self.keys = keys
-                self.sync = False
-                self.seen_event = True
-        g.schedule(set_keysfn)
+        with self:
+            self.keys = keys
+            self.sync = False
+            self.seen_event = True
 
     def run(self):
         while self.keys is None:
@@ -1094,7 +1095,7 @@ class ARPMonitor(KillableThread):
         dbg("arp: %s" % (msg))
 
     def scan_arp(self):
-        self.g.schedule(self.scan_arp, ARP_SCAN_INTERVAL)
+        self.g.schedule_delay(self.scan_arp, ARP_SCAN_INTERVAL)
         with self:
             self.dbg("scanning table")
             new_ip = set()
@@ -1121,7 +1122,7 @@ class ARPMonitor(KillableThread):
             unseen_mac = new_mac - self.current_mac
             self.current_mac = new_mac
             for m in unseen_mac:
-                self.g.dbt.check_bogon(m, mac_map[m])
+                schedule(self.g.dbt.check_bogon, m, mac_map[m])
 
     def ping(self, ip):
         self.dbg("Pinging %s" % ip)
@@ -1156,6 +1157,17 @@ class ARPMonitor(KillableThread):
             except:
                 self.dbg("Wonky exception")
 
+class Closure(object):
+    def __init__(self, fn, timeout, args, kwargs):
+        self.timeout = timeout
+        self._fn = fn
+        self._args = args
+        self._kwargs = kwargs
+    def __call__(self):
+        self._fn(*self._args, **self._kwargs)
+    def __str__(self):
+        return "<Closure %s %s %s>" % (self._fn, self._args, self._kwargs)
+
 class Globals(object):
     def __init__(self, config):
         self.config = config
@@ -1163,8 +1175,8 @@ class Globals(object):
         self.triggers = []
         self.threads = []
         self.dbt = self.add_thread(DBThread(self))
-        self.door_up = self.add_thread(DoorMonitor("door_up"))
-        self.door_down = self.add_thread(DoorMonitor("door_down"))
+        self.door_up = self.add_thread(DoorMonitor(self, "door_up"))
+        self.door_down = self.add_thread(DoorMonitor(self, "door_down"))
         self.aux = self.add_thread(AuxMonitor(self, "arduino"))
         self.irc = self.add_thread(IRCSpammer(self))
         self.arp = self.add_thread(ARPMonitor(self))
@@ -1175,11 +1187,15 @@ class Globals(object):
         t.daemon = True
         return t
 
-    # Run a function from the main thread with no locks held
-    def schedule(self, fn, delay=0):
+    # Run a function from the main thread with no locks held after a delay
+    def schedule_delay(self, fn, delay, *args, **kwargs):
         with self.cond:
-            self.triggers.append((fn, time.time()+delay))
+            self.triggers.append(Closure(fn, time.time()+delay, args, kwargs))
             self.cond.notify()
+
+    # Run a function from the main thread with no locks held
+    def schedule(self, fn, *args, **kwargs):
+        self.schedule_delay(fn, 0, *args, **kwargs)
 
     def run(self):
         # Start all the worker threads
@@ -1194,13 +1210,14 @@ class Globals(object):
                     triggers = self.triggers
                     self.triggers = []
                     expired = []
-                    for (fn, timeout) in triggers:
+                    for cl in triggers:
+                        timeout = cl.timeout
                         if timeout > now:
-                            self.triggers.append((fn, timeout))
+                            self.triggers.append(cl)
                             if deadline is None or timeout < deadline:
                                 deadline = timeout
                         else:
-                            expired.append(fn)
+                            expired.append(cl)
                     if len(expired) == 0:
                         if deadline is None:
                             timeout = None
@@ -1208,16 +1225,17 @@ class Globals(object):
                             timeout = deadline - now;
                         dbg("Waiting %s" % (str(timeout)))
                         self.cond.wait(deadline - now)
-                for fn in expired:
+                for cl in expired:
                     try:
-                        dbg("Running %s" % fn)
-                        fn()
+                        dbg("Running %s" % cl)
+                        cl()
                         dbg("Done")
                     except KeyboardInterrupt:
                         dbg("Got kbint")
                         raise
                     except BaseException as e:
-                        dbg("main(%s): %s" % (fn, str(e)))
+                        dbg("main(%s)")
+                        traceback.print_exc()
         except KeyboardInterrupt:
             dbg("Got kbint2")
             pass
