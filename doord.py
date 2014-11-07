@@ -406,7 +406,6 @@ class DBThread(KillableThread):
     @dbwrapper
     def update_arp_entries(self, cur, macs):
         for m in macs:
-            self.dbg("Mac %s" % m)
             self._add_presence_entry(cur, m, 'e')
         self.update_space_state();
 
