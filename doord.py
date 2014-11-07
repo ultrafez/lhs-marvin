@@ -9,7 +9,7 @@
 # to locking.  
 # Long-running blocking operations shouldbe done outside the thread lock
 # When calling a methods accross thread objects there is potential for
-# deadlock.  A dispatch mechanism allows callbacks to be run at a later point
+# deadlock.  A dispatch mechanism allows functions to be run at a later point
 # from the main thread with no locks held.
 
 import sys
@@ -233,7 +233,7 @@ class DBThread(KillableThread):
             " WHERE ref='webcam';")
         row = cur.fetchone()
         if row is not None:
-            self.g.aux.set_servo(int(row[0]))
+            schedule(self.g.aux.set_servo, int(row[0]))
 
     # Read and update tag list from database
     @dbwrapper
@@ -332,7 +332,7 @@ class DBThread(KillableThread):
                 " SET value=%d" \
                 " WHERE ref = 'space-state';" \
                 % state_val)
-            self.g.aux.update()
+            schedule(self.g.aux.set_open, self.space_open_state)
 
     # Can be safely called from other threads
     def update_space_state(self):
@@ -434,14 +434,9 @@ class DBThread(KillableThread):
         last_state = self.space_open_state
         self.space_open_state = (row is not None)
         if last_state != self.space_open_state:
-            self.g.aux.update()
+            schedule(self.g.aux.set_open, self.space_open_state)
 
-    # Can be safely called from other threads
-    def is_space_open(self):
-        with self:
-            return self.space_open_state
-
-    # Can be safely called from other threads
+    # Called from other threads
     @dbwrapper
     def query_override(self, cur, tag, match=""):
         def is_open_evening():
@@ -520,7 +515,7 @@ class DBThread(KillableThread):
             self.door_state[door_name] = state
             if door_name == "internaldoor":
                 if state:
-                    self.g.aux.servo_override(180)
+                    schedule(self.g.aux.servo_override, 180)
                 if not self.space_open_state:
                     self.g.irc.send("Internal door %s" % state_name)
         self.update_space_state();
@@ -608,6 +603,7 @@ class AuxMonitor(KillableThread):
         self.servo_override_time = None
         self.temp_due = True
         self.bell_duration = None
+        self.sign_on = False
         self.g = g
 
     def dbg(self, msg):
@@ -629,7 +625,7 @@ class AuxMonitor(KillableThread):
             raise Exception(error + ("'%s/%s'" %(r, response)))
 
     def sync_sign(self):
-        new_sign = self.g.dbt.is_space_open()
+        new_sign = self.sign_on
         if (self.last_sign is None) or (self.last_sign != new_sign):
             self.last_sign = new_sign
             if new_sign:
@@ -659,8 +655,8 @@ class AuxMonitor(KillableThread):
     def temp_trigger(self):
         with self:
             self.temp_due = True
-            self.update()
             self.g.schedule_delay(self.temp_trigger, 60)
+            self._update()
 
     def sync_temp(self):
         if self.temp_due:
@@ -705,8 +701,7 @@ class AuxMonitor(KillableThread):
                 self.wait()
 
     def run(self):
-        with self:
-            self.temp_trigger()
+        self.temp_trigger()
         while True:
             try:
                 self.dbg("Opening serial port")
@@ -742,40 +737,38 @@ class AuxMonitor(KillableThread):
             except KeyboardInterrupt:
                 break
 
+    # Assumes lock is already held
+    def _update(self):
+        self.need_sync = True;
+        self.notify()
+
     # Called from other threads
-    def update(self):
-        def updatefn():
-            with self:
-                self.need_sync = True;
-                self.notify()
-        self.g.schedule(updatefn)
+    def set_open(self, state):
+        with self:
+            self.sign_on = state
+            self._update();
 
     # Called from other threads
     def set_servo(self, pos):
-        def servofn():
-            with self:
-                if self.servo_pos != pos:
-                    self.servo_pos = pos
-                    self.update()
-        self.g.schedule(servofn)
+        with self:
+            if self.servo_pos != pos:
+                self.servo_pos = pos
+                self._update()
 
     # Called from other threads
     def bell_trigger(self, duration):
-        def bellfn(self):
-            with self:
-                self.bell_duration = duration
-                self.update()
-        self.g.schedule(bellfn)
+        with self:
+            self.bell_duration = duration
+            self._update()
 
     # Called from other threads
     def servo_override(self, angle):
-        def servo_overridefn(self):
-            with self:
+        with self:
+            if angle is not None:
                 self.servo_override_pos = angle
                 self.servo_override_time = time.time() + 10
-                self.g.schedule_delay(self.update, 10)
-                self.update()
-        self.g.schedule(servo_overridefn)
+                self.g.schedule_delay(self.servo_override, 10, None)
+            self._update()
 
 # Communicate with door locks.
 # For Protocol details see DoorLock.ino
@@ -963,7 +956,7 @@ class DoorMonitor(KillableThread):
             if g.dbt.query_override('!' + c, self.otp):
                 self.remote_open = True
             elif c == '#':
-                g.aux.bell_trigger(2)
+                schedule(g.aux.bell_trigger, 2)
         if self.remote_open:
             self.remote_open = False
             self.do_cmd_expect("U0", "A0", "Error doing remote open")
@@ -1138,7 +1131,7 @@ class ARPMonitor(KillableThread):
             self.ping(ip)
 
     def run(self):
-        self.g.schedule(self.scan_arp)
+        schedule(self.scan_arp)
         while True:
             try:
                 with self:
