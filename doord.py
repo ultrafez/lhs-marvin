@@ -5,6 +5,13 @@
 
 # Control electronic door locks
 
+# This script uses threads extensively, so attention needs to be paid
+# to locking.  
+# Long-running blocking operations shouldbe done outside the thread lock
+# When calling a methods accross thread objects there is potential for
+# deadlock.  A dispatch mechanism allows callbacks to be run at a later point
+# from the main thread with no locks held.
+
 import sys
 import crc16
 import serial
@@ -256,7 +263,7 @@ class DBThread(KillableThread):
             self.tags = []
             raise
         if changed:
-            self.g.schedule(self.sync_keys)
+            self.sync_keys()
 
     def recent_tag_out(self):
         if self.last_tag_out is None:
@@ -520,9 +527,8 @@ class DBThread(KillableThread):
 
     def sync_keys(self):
         self.dbg("Triggering key sync");
-        with self:
-            self.g.door_up.set_keys(self._keylist(Tag.upstairs_ok))
-            self.g.door_down.set_keys(self._keylist(Tag.downstairs_ok))
+        self.g.door_up.set_keys(self._keylist(Tag.upstairs_ok))
+        self.g.door_down.set_keys(self._keylist(Tag.downstairs_ok))
 
     def run(self):
         while True:
@@ -588,6 +594,9 @@ def crc_str(s):
     return "%04X" % crc16.crc16xmodem(s)
 
 # Communicate with auxiliary arduino (sign, webcam)
+# Extra care must be taken to avoid deadlock between this DBThread
+# In particular AuxMonitor.work() is called with the lock held and
+# calls synchronous locking DBThread functions.
 class AuxMonitor(KillableThread):
     def __init__(self, g, port):
         super(AuxMonitor, self).__init__()
@@ -743,24 +752,30 @@ class AuxMonitor(KillableThread):
 
     # Called from other threads
     def set_servo(self, pos):
-        with self:
-            if self.servo_pos != pos:
-                self.servo_pos = pos
-                self.update()
+        def servofn():
+            with self:
+                if self.servo_pos != pos:
+                    self.servo_pos = pos
+                    self.update()
+        self.g.schedule(servofn)
 
     # Called from other threads
     def bell_trigger(self, duration):
-        with self:
-            self.bell_duration = duration
-            self.update()
+        def bellfn(self):
+            with self:
+                self.bell_duration = duration
+                self.update()
+        self.g.schedule(bellfn)
 
     # Called from other threads
     def servo_override(self, angle):
-        with self:
-            self.servo_override_pos = angle
-            self.servo_override_time = time.time() + 10
-            self.g.schedule(self.update, 10)
-            self.update()
+        def servo_overridefn(self):
+            with self:
+                self.servo_override_pos = angle
+                self.servo_override_time = time.time() + 10
+                self.g.schedule(self.update, 10)
+                self.update()
+        self.g.schedule(servo_overridefn)
 
 # Communicate with door locks.
 # For Protocol details see DoorLock.ino
@@ -957,11 +972,15 @@ class DoorMonitor(KillableThread):
                 self.otp = ''
                 self.otp_expires = None
 
+    # Called from other threads
+    # keys will be used directly, and must not be modified later
     def set_keys(self, keys):
-        with self:
-            self.keys = keys[:]
-            self.sync = False
-            self.seen_event = True
+        def set_keysfn():
+            with self:
+                self.keys = keys
+                self.sync = False
+                self.seen_event = True
+        g.schedule(set_keysfn)
 
     def run(self):
         while self.keys is None:
