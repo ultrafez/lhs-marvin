@@ -686,15 +686,10 @@ class AuxMonitor(KillableThread):
                 raise Exception("Marvin went AWOL")
             if r[10:] == "+":
                 self.resync()
-            self.dbg("Sign")
             self.sync_sign()
-            self.dbg("Servo")
             self.sync_servo()
-            self.dbg("Temperature")
             self.sync_temp()
-            self.dbg("Bell")
             self.sync_bell()
-            self.dbg("Done")
             self.need_sync = False
             while not self.need_sync:
                 self.dbg("Waiting")
