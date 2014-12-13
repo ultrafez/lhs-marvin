@@ -18,7 +18,6 @@ time	IN	CNAME	gateway.hackspace.
 
 gateway	IN	A	172.31.26.1
 wifihifi	IN	A	172.31.26.12
-tv	IN	A	172.31.26.13
 arcadecab	IN	A	172.31.26.15
 nas	IN	A	172.31.26.16
 printer	IN	A	172.31.26.17

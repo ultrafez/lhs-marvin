@@ -14,7 +14,6 @@ $TTL	604800
 @	IN	NS	gateway.hackspace.
 1.26	IN	PTR	gateway.hackspace.
 12.26	IN	PTR	wifihifi.hackspace.
-13.26	IN	PTR	tv.hackspace.
 15.26	IN	PTR	arcadecab.hackspace.
 16.26	IN	PTR	nas.hackspace.
 17.26	IN	PTR	printer.hackspace.
