@@ -894,7 +894,8 @@ class DoorMonitor(KillableThread):
         if action == 'R':
             astr = "Rejected"
         elif action == 'U':
-            g.dbt.do_tag_in(tag);
+            if not self.flush_backlog:
+                g.dbt.do_tag_in(tag);
             astr = "Unlocked"
         elif action == 'P':
             astr = "BadPIN"
