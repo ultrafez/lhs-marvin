@@ -25,7 +25,7 @@ phone	IN	A	172.31.26.18
 3dprinter	IN	A	172.31.26.19
 sauron	IN	A	172.31.26.20
 laser	IN	A	172.31.26.21
-cncmill IN      A       172.31.26.22
+cncmill	IN	A	172.31.26.22
 
 wifi-ap	IN	A	172.31.27.2
 cuboid	IN	A	172.31.27.3
