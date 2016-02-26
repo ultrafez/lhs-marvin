@@ -21,6 +21,7 @@ $TTL	604800
 19.26	IN	PTR	3dprinter.hackspace.
 20.26	IN	PTR	sauron.hackspace.
 21.26	IN	PTR	laser.hackspace.
+22.26	IN	PTR	cncmill.hackspace.
 
 2.27	IN	PTR	wifi-ap.hackspace.
 3.27	IN	PTR	cuboid.hackspace.
