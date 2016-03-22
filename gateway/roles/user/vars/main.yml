@@ -8,4 +8,4 @@ all_users:
     groups: sudo,lpadmin
   ranyardm:
     pubkey: ranyardm.pub
-    groups: lpadmin
+    groups: sudo,lpadmin
