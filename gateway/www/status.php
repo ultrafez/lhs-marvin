@@ -82,8 +82,8 @@ $state['sensors']['temperature'][] = $temp;
 $sql="select total from people_count;";
 $r=mysql_query($sql);
 $row = mysql_fetch_assoc($r);
-$peoplecount = $row['total'];
-$state['sensors']['people_now_present']['value'] = $peoplecount;
+$peoplecount = (int)$row['total'];
+$state['sensors']['people_now_present'][0]['value'] = $peoplecount;
 
 if ($peoplecount > 0) {
   $sql="select name from people_list;";
@@ -92,7 +92,7 @@ if ($peoplecount > 0) {
   while ($row = mysql_fetch_assoc($r)) {
     $people_list[] = $row['name'];
   }
-  $state['sensors']['people_now_present']['names'] = $people_list;
+  $state['sensors']['people_now_present'][0]['names'] = $people_list;
 }
 
 header('Content-type: application/json');
