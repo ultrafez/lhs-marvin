@@ -887,6 +887,9 @@ class DoorMonitor(KillableThread):
         return "%04X" % crc
 
     def handle_log(self, msg):
+        if len(msg) <= 7:
+            self.dbg("Log message too short")
+            return
         t = decode_time(msg[0:6])
         action = msg[6]
         tag = msg[7:]
