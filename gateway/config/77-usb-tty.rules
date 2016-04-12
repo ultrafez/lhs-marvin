@@ -16,8 +16,8 @@ GOTO="usb_tty_end"
 
 LABEL="usb_tty_cp210"
 
-KERNELS=="*1:1.0", SYMLINK+="door_down"
-KERNELS=="*2:1.0", SYMLINK+="door_up"
+KERNELS=="*3:1.0", SYMLINK+="door_down"
+KERNELS=="*4:1.0", SYMLINK+="door_up"
 
 LABEL="usb_tty_end"
 
