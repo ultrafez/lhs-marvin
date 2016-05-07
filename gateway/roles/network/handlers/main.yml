@@ -6,3 +6,5 @@
 - name: restart firewall
   service: name=firewall state=restarted
   service: name=firewall6 state=restarted
+- name: restart sshd
+  service: name=ssh state=restarted
