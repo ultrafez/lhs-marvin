@@ -11,5 +11,5 @@
   notify: restart apache
 - file: path=/etc/apache2/sites-enabled/marvin state=link src=/etc/apache2/sites-available/marvin.conf
   notify: restart apache
-- copy: src=secret/htpasswd /etc/apache2/
+- copy: src=secret/htpasswd dest=/etc/apache2/ owner=www-data
   notify: restart apache
