@@ -1,7 +1,7 @@
 #! /bin/sh
 
 debian_dist=wheezy
-git_repo="https://github.com/pbrook/lhs-marvin.git"
+git_repo="https://github.com/leedshackspace/lhs-marvin.git"
 
 echo "Adding backports repository"
 # Enable backports directory
