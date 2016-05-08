@@ -13,3 +13,7 @@
   notify: restart apache
 - copy: src=secret/htaccess dest=/etc/apache2/ owner=www-data
   notify: restart apache
+- copy: src=../useradmin/src/ dest=/var/www/useradmin
+  notify: restart apache
+- copy: src=secret/useradmin-config.php dest=/var/www/useradmin/config.php
+  notify: restart apache
