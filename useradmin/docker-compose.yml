@@ -16,5 +16,5 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: hackspace
       MYSQL_DATABASE: hackspace
-      MYSQL_USER: hackspace
-      MYSQL_PASSWORD: hackspace
+      MYSQL_USER: dev
+      MYSQL_PASSWORD: dev
