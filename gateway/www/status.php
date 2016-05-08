@@ -31,12 +31,6 @@ $state = array(
     'lat' => 53.800747,
     'lon' => -1.532853,
     ),
-  'cam' => array(
-    'http://www.leedshackspace.org.uk/cam1.jpg',
-    'http://www.leedshackspace.org.uk/cam2.jpg',
-    'http://www.leedshackspace.org.uk/cam3.jpg',
-    'http://www.leedshackspace.org.uk/cam4.jpg'
-    ),
   'state' => array(
     'open' => Null,
     ),
