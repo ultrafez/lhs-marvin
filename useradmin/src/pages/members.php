@@ -23,8 +23,8 @@ $dbh = Utils::getPdo();
 
 <?php foreach ($dbh->query('SELECT * from people;') as $row): ?>
         <tr>
-            <td><?php echo htmlspecialchars($row['id']); ?></td>
-            <td><?php echo htmlspecialchars($row['name']); ?></td>
+            <td><a href="<?php echo Utils::base(); ?>/?action=viewmember&id=<?php echo $row['id']; ?>"><?php echo htmlspecialchars($row['id']); ?></a></td>
+            <td><a href="<?php echo Utils::base(); ?>/?action=viewmember&id=<?php echo $row['id']; ?>"><?php echo htmlspecialchars($row['name']); ?></a></td>
             <td><a href="<?php echo Utils::base(); ?>/?action=viewmember&id=<?php echo $row['id']; ?>"><?php echo htmlspecialchars($row['fullname']); ?></a></td>
             <td><?php echo htmlspecialchars($row['email']); ?></td>
             <td><?php echo htmlspecialchars($row['member']); ?></td>
