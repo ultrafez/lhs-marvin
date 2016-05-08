@@ -5,3 +5,11 @@
 - copy: src=www/ dest=/var/www/
   notify: restart apache
 
+- copy: src=config/apachevhost.conf dest=/etc/apache2/sites-available/marvin.conf
+  notify: restart apache
+- file: path=/etc/apache2/sites-enabled/000-default state=absent
+  notify: restart apache
+- file: path=/etc/apache2/sites-enabled/marvin state=link src=/etc/apache2/sites-available/marvin.conf
+  notify: restart apache
+- copy: src=secret/htaccess dest=/etc/apache2/ owner=www-data
+  notify: restart apache
