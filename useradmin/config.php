@@ -1,6 +1,6 @@
 <?php
 $config = array();
-$config['mysql_host'] = 'localhost';
+$config['mysql_host'] = 'db';
 $config['mysql_user'] = 'dev';
 $config['mysql_password'] = 'dev';
 $config['mysql_db'] = 'hackspace';
