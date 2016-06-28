@@ -63,13 +63,6 @@ try {
         if (!$result) {
             throw new Exception('Couldn\'t insert card record');
         }
-
-        $systemsStmt = $dbh->prepare('INSERT INTO systems (mac, description, source, hidden) VALUES (:mac, :description, :source, :hidden)');
-        $result = $systemsStmt->execute($systems);
-
-        if (!$result) {
-            throw new Exception('Couldn\'t insert new systems record');
-        }
 ?>
     <div class="alert alert-success">Member added. <a href="<?php echo Utils::base(); ?>/?action=viewmember&id=<?php echo urlencode($id); ?>">View profile</a></div>
 <?php
