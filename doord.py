@@ -858,12 +858,14 @@ class DoorMonitor(KillableThread):
         # Enumerate devices
         self.do_cmd_expect("S0", "S1", "Device not accepting address")
         self.send_ping()
+        hash_result = "H0" + self.key_hash()
         r = self.do_cmd("K0")
-        if r != "H0" + self.key_hash():
+        if r != hash_result:
             self.dbg("Uploading keys")
             self.do_cmd_expect("R0", "A0", "Device key reset failed")
             for key in self.keys:
                 self.do_cmd_expect("N0" + key, "A0", "Device not accepting keys")
+            self.do_cmd_expect("K0", hash_result, "Key upload corrupt")
         self.sync = True
         self.flush_backlog = True
 
