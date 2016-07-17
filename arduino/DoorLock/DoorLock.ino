@@ -315,7 +315,7 @@ from_hex(char c)
   if (c >= 'a' && c <= 'f')
     return c + 10 - 'a';
   if (c >= 'A' && c <= 'F')
-    return c + 10 - 'F';
+    return c + 10 - 'A';
   return 0xff;
 }
 
@@ -487,10 +487,10 @@ eeprom_read_tag()
         goto fail;
     }
     len = EEPROM.read(eeprom_offset);
-    eeprom_offset++;
     if (len == 0xff) {
         goto fail;
     }
+    eeprom_offset++;
 
     p = eeprom_tag_id;
     for (n = 0; n < 4; n++) {
@@ -681,6 +681,7 @@ add_key(uint8_t *key, int len)
         }
         val |= c << 4;
         eeprom_update(offset, val);
+        offset++;
         key += 2;
     }
     if (*key != ' ') {
