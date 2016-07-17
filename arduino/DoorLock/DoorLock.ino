@@ -126,6 +126,7 @@ uint8_t my_addr = '?';
     Messages will always be transmitted as a single, complete frame.
 
     Tag IDs are hex encoded, with a pair of hex characters for each ID byte.
+    Tag IDs must be 8 characters (4 bytes) long.
 
     Timestamps are base64 encoded unix time values. 6 characters encode a
 
@@ -182,13 +183,16 @@ uint8_t my_addr = '?';
 	Response: MSG_ACK
 
       MSG_KEY_ADD
-	Add an access tag.
-	Data: Tag ID followed by optional space (ascii 0x20) and PIN
+	Add an access tag. The may defer the operation and return success
+        immediately.  The host must send a MSG_KEY_INFO to ensure that the
+        keys have been comitted to non-volatile storage.
+	Data: Tag ID followed by space (ascii 0x20) and PIN
 	Response: MSG_ACK
 
       MSG_KEY_INFO
 	Calculate the current keyset hash.  This can be used to determine
        	whether a newly enumerated device matches the current access list.
+        Also flushes pending MSG_KEY_ADD writes.
 	Data: None
 	Response: MSG_KEY_HASH
 
