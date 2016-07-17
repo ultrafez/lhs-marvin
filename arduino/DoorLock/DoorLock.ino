@@ -8,6 +8,8 @@
 
 #include "mfrc522.h"
 
+#define EEPROM_VERSION_OFFSET 63
+#define TAG_VERSION_ID 1
 #define EEPROM_TAG_START 64
 #define EEPROM_TAG_END 1023
 #define DEBOUNCE_INTERVAL 100
@@ -305,19 +307,17 @@ hex_char(uint8_t val)
     return 'A' + val - 10;
 }
 
-#if 0
 static uint8_t
 from_hex(char c)
 {
   if (c >= '0' && c <= '9')
-    return c - 9;
+    return c - '0';
   if (c >= 'a' && c <= 'f')
     return c + 10 - 'a';
-  if (c >= 'a' && c <= 'f')
-    return c - 'a';
-  return 0;
+  if (c >= 'A' && c <= 'F')
+    return c + 10 - 'F';
+  return 0xff;
 }
-#endif
 
 static void
 write_hex8(char *buf, uint8_t val)
@@ -463,55 +463,79 @@ log_notag(char action)
   seen_event = true;
 }
 
-/* Returns -1 if not found.  */
-static int
+static char eeprom_tag_id[MAX_TAG_LEN + 1];
+static char eeprom_tag_pin[MAX_TAG_LEN + 1];
+static int eeprom_offset;
+static int eeprom_last_offset;
+
+static void
+eeprom_rewind()
+{
+    eeprom_offset = EEPROM_TAG_START;
+}
+
+/* Returns false if no more tags are available.  */
+static bool
+eeprom_read_tag()
+{
+    uint8_t len;
+    uint8_t c;
+    uint8_t n;
+    char *p;
+
+    if (eeprom_offset < 0) {
+        goto fail;
+    }
+    len = EEPROM.read(eeprom_offset);
+    eeprom_offset++;
+    if (len == 0xff) {
+        goto fail;
+    }
+
+    p = eeprom_tag_id;
+    for (n = 0; n < 4; n++) {
+        c = EEPROM.read(eeprom_offset);
+        eeprom_offset++;
+        write_hex8(p, c);
+        p += 2;
+    }
+    *p = 0;
+    p = eeprom_tag_pin;
+    while (len > 0) {
+        c = EEPROM.read(eeprom_offset);
+        eeprom_offset++;
+        *(p++) = c;
+        len--;
+    }
+    *p = 0;
+    return true;
+fail:
+    if (eeprom_offset >= 0) {
+        eeprom_last_offset = eeprom_offset;
+    }
+    eeprom_offset = -1;
+    *eeprom_tag_id = 0;
+    *eeprom_tag_pin = 0;
+    return false;
+}
+
+/* Returns false if not found.  */
+static bool
 find_tag(const char *tag, char *pin)
 {
-  int offset;
-  int match;
-  const char *p;
-  uint8_t c;
-
-  if (pin)
-    *pin = 0;
-
-  offset = EEPROM_TAG_START;
-  while (true)
-    {
-      p = tag;
-      match = offset;
-      c = EEPROM.read(offset);
-      if (c == 0xff || c == EEPROM_TAG_END)
-	return -1;
-      while (true)
-	{
-	  offset++;
-	  if (c == 0 || c == ' ')
-	    break;
-	  if (match != -1)
-	    {
-	      if (c == *p)
-		p++;
-	      else
-		match = -1;
-	    }
-	  c = EEPROM.read(offset);
-	}
-      if (match != -1 && *p == 0)
-	{
-	  if (c == ' ' && pin)
-	    {
-	      while (c != 0 && offset != EEPROM_TAG_END)
-		{
-		  c = EEPROM.read(offset);
-		  offset++;
-		  *pin = c;
-		  pin++;
-		}
-	    }
-	  return match;
-	}
+    eeprom_rewind();
+    while (eeprom_read_tag()) {
+        if (strcmp(tag, eeprom_tag_id) == 0) {
+            if (pin)
+                strcpy(pin, eeprom_tag_pin);
+            return true;
+        }
     }
+
+    if (pin)
+        *pin = 0;
+
+    return false;
 }
 
 #ifdef RFID2_CS_PIN
@@ -533,7 +557,7 @@ tag_scanout(const char *tag)
 static void
 tag_scanned(const char *tag)
 {
-  if (find_tag(tag, last_pin) == -1)
+  if (!find_tag(tag, last_pin))
     {
       fail_timeout = now_plus(FAIL_INTERVAL);
       pin_pos = NULL;
@@ -627,58 +651,97 @@ eeprom_update(int offset, uint8_t val)
 static void
 add_key(uint8_t *key, int len)
 {
-  int offset = EEPROM_TAG_START;
-  uint8_t c;
+    int offset = EEPROM_TAG_START;
+    uint8_t c;
+    uint8_t val;
+    int n;
 
-  while (true)
-    {
-      c = EEPROM.read(offset);
-      if (c == 0xff || offset == EEPROM_TAG_END)
-	break;
-      offset++;
+    eeprom_rewind();
+    while (eeprom_read_tag()) {
+        /* No-op */
     }
-  if (offset + len >= EEPROM_TAG_END)
-    {
-      Serial.println("#tag list full");
-      return;
+    // 8 digit ID + ' ' + 4(minimum) digit PIN.
+    if (len < 13) {
+        Serial.println("#tag too short");
+        return;
     }
-  while (len)
-    {
-      eeprom_update(offset, *key);
-      len--;
-      key++;
-      offset++;
+    offset = eeprom_last_offset;
+    // The tag id is saved in binary, which saves us 4 bytes
+    if (offset + len - 4 >= EEPROM_TAG_END) {
+        Serial.println("#tag list full");
+        return;
     }
-  eeprom_update(offset++, 0);
-  eeprom_update(offset, 0xff);
-  send_ack();
+    offset++;
+    for (n = 0; n < 4; n++) {
+        c = from_hex(key[0]);
+        val = from_hex(key[1]);
+        if ((c == 0xff) || (val == 0xff)) {
+            Serial.println("#Bad tag");
+            return;
+        }
+        val |= c << 4;
+        eeprom_update(offset, val);
+        key += 2;
+    }
+    if (*key != ' ') {
+        Serial.println("#Tag too long");
+        return;
+    }
+    key++;
+    len -= 9;
+    eeprom_update(eeprom_last_offset, len);
+    eeprom_update(offset + len, 0xff);
+    while (len) {
+        eeprom_update(offset, *key);
+        len--;
+        key++;
+        offset++;
+    }
+    send_ack();
 }
 
 static void
 reset_keys(void)
 {
-  eeprom_update(EEPROM_TAG_START, 0xff);
-  send_ack();
+    eeprom_update(EEPROM_VERSION_OFFSET, TAG_VERSION_ID);
+    eeprom_update(EEPROM_TAG_START, 0xff);
+}
+
+static void
+init_keys(void)
+{
+    if (EEPROM.read(EEPROM_VERSION_OFFSET) != TAG_VERSION_ID) {
+        reset_keys();
+    }
+}
+
+static uint16_t
+crc_string(uint16_t crc, char *s)
+{
+    uint8_t val;
+
+    while (*s) {
+        val = *(s++);
+        crc = _crc_xmodem_update(crc, val);
+    }
+    return crc;
 }
 
 static void
 key_info(void)
 {
-  uint16_t crc;
-  int offset;
-  uint8_t val;
+    uint16_t crc;
 
-  msg_buf[0] = MSG_KEY_HASH;
-  msg_buf[1] = my_addr;
-  crc = 0;
-  offset = EEPROM_TAG_START;
-  while (true)
-    {
-      val = EEPROM.read(offset);
-      if (val == 0xff || val == EEPROM_TAG_END)
-	break;
-      crc = _crc_xmodem_update(crc, val);
-      offset++;
+    msg_buf[0] = MSG_KEY_HASH;
+    msg_buf[1] = my_addr;
+    crc = 0;
+
+    eeprom_rewind();
+    while (eeprom_read_tag()) {
+        crc = crc_string(crc, eeprom_tag_id);
+        crc = _crc_xmodem_update(crc, ' ');
+        crc = crc_string(crc, eeprom_tag_pin);
+        crc = _crc_xmodem_update(crc, 0);
     }
   write_hex8((char *)msg_buf + 2, crc >> 8);
   write_hex8((char *)msg_buf + 4, crc & 0xff);
@@ -745,6 +808,7 @@ process_msg(uint8_t *msg, int len)
 	  if (len != 2)
 	    return;
 	  reset_keys();
+          send_ack();
 	  return;
 	case MSG_KEY_ADD:
 	  if (len < 4)
@@ -1132,6 +1196,8 @@ void loop()
   pinMode(SCANOUT_LED_PIN, OUTPUT);
   digitalWrite(SCANOUT_LED_PIN, SCANOUT_LED_OFF);
 #endif
+
+  init_keys();
 
   while (1)
     {
