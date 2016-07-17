@@ -743,6 +743,9 @@ key_info(void)
         crc = crc_string(crc, eeprom_tag_pin);
         crc = _crc_xmodem_update(crc, 0);
     }
+  Serial.print("# ");
+  Serial.print(EEPROM_TAG_END - eeprom_last_offset);
+  Serial.println(" bytes EEPROM free");
   write_hex8((char *)msg_buf + 2, crc >> 8);
   write_hex8((char *)msg_buf + 4, crc & 0xff);
   send_packet(msg_buf, 6);
