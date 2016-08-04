@@ -50,6 +50,8 @@
 
 #define REMOTE_IO_RST_PIN A3
 
+#define EXTERNAL_EEPROM 1
+
 #endif /* UPSTAIRS */
 
 
@@ -97,5 +99,22 @@
 #define LOCK_PIN 2
 #define LOCK_OFF 0
 #define LOCK_ON 1
+
+#ifdef EXTERNAL_EEPROM
+
+#define SDA_PORT PORTC
+#define SDA_PIN 1 // A1
+#define SCL_PORT PORTC
+#define SCL_PIN 0 // A0
+
+// AT24C256 (32kbyte) external EEPROM
+#define EEPROM_TAG_END 0x7fff
+
+#else
+
+// 1kbyte internal EEPROM
+#define EEPROM_TAG_END 1023
+
+#endif
 
 #endif
