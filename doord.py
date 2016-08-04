@@ -311,7 +311,9 @@ class DBThread(KillableThread):
             if self._recent_tag_out():
                 new_state = False
             else:
-                new_state = self.door_state["internaldoor"]
+                # Disabled while door sensor is borked
+                #new_state = self.door_state["internaldoor"]
+                new_state = False
             if old_state and not new_state:
                 self.space_open_state = False
                 self.g.irc.send("The space is closed")
