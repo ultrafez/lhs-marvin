@@ -21,7 +21,7 @@ $dbh = Utils::getPdo();
     </thead>
     <tbody>
 
-<?php foreach ($dbh->query('SELECT * from people;') as $row): ?>
+<?php foreach ($dbh->query('SELECT * from people ORDER BY FIELD(member, "YES", "NO");') as $row): ?>
         <tr>
             <td><a href="<?php echo Utils::base(); ?>/?action=viewmember&id=<?php echo $row['id']; ?>"><?php echo htmlspecialchars($row['id']); ?></a></td>
             <td><a href="<?php echo Utils::base(); ?>/?action=viewmember&id=<?php echo $row['id']; ?>"><?php echo htmlspecialchars($row['name']); ?></a></td>
