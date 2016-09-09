@@ -17,7 +17,7 @@
   notify: restart bind
 - copy: src=config/default-bind dest=/etc/default/bind9 
   notify: restart bind
-- copy: src=config/resolv.conf.head
+- copy: src=config/resolv.conf.tail dest=/etc/resolvconf/resolv.conf.d/tail
   notify: restart resolvconf
 
 - apt: pkg=openvpn
