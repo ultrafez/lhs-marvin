@@ -8,3 +8,5 @@
   service: name=firewall6 state=restarted
 - name: restart sshd
   service: name=ssh state=restarted
+- name: restart resolvconf
+  service: name=resolvconf state=restarted
