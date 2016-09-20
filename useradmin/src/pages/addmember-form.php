@@ -43,10 +43,10 @@ require_once('header.php');
         </div>
     </div>
     <div class="form-group">
-        <label for="keyholder" class="col-sm-2">24/7 access?</label>
+        <label for="keyholder" class="col-sm-2">Full member?</label>
         <div class="col-sm-10">
             <input type="checkbox" id="keyholder" />
-            <p class="help-block">People with 24/7 access can open the space and be there on their own.</p>
+            <p class="help-block">Full members have 24/7 access; provisional members can use the space when a full member is there.</p>
         </div>
     </div>
 
@@ -63,8 +63,6 @@ require_once('header.php');
             <button type="submit" class="btn btn-primary">Submit</button>
         </div>
     </div>
-    
-
 </form>
 
 <script type="text/javascript">

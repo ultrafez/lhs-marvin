@@ -14,7 +14,7 @@ $dbh = Utils::getPdo();
             <th>Full Name</th>
             <th>Email</th>
             <th>Member?</th>
-            <th>Keyholder?</th>
+            <th>Full member?</th>
             <th>Door access</th>
             <th>Payment ref</th>
         </tr>

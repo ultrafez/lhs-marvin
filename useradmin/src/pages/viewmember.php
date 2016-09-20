@@ -54,15 +54,15 @@ $devices = $deviceStmt->fetchAll();
     <dd><?php echo htmlspecialchars($person['paymentref']); ?></dd>
 </dl>
 
-<h2>24/7 access status</h2>
+<h2>Membership status</h2>
 <?php
 switch ($person['access']):
     case 'BOTH': ?>
-        <p>24/7 member</p>
+        <p>Full member (24/7 access)</p>
         <form action="<?php echo Utils::base(); ?>/?action=keyholder" method="post">
             <input type="hidden" name="id" value="<?php echo htmlspecialchars($person['id']); ?>" />
             <input type="hidden" name="access" value="NO" />
-            <button type="submit" class="btn btn-danger">Revoke keyholder status</button>
+            <button type="submit" class="btn btn-danger">Make provisional member</button>
         </form>
 <?php
         break;
@@ -71,22 +71,18 @@ switch ($person['access']):
         <p>Downstairs only (probably a Pedaller)</p>
         <form action="<?php echo Utils::base(); ?>/?action=keyholder" method="post">
             <input type="hidden" name="id" value="<?php echo htmlspecialchars($person['id']); ?>" />
-            <input type="hidden" name="access" value="BOTH" />
-            <?php if ($person['access'] === 'NO'): ?>
-                <button type="submit" class="btn btn-warning">Make keyholder</button>
-            <?php endif; ?>
+            <button type="submit" name="access" value="BOTH" class="btn btn-warning">Make full member</button>
+            <button type="submit" name="access" value="NO" class="btn btn-warning">Make provisional member</button>
         </form>
 <?php
         break;
 
     case 'NO': ?>
-        <p>No 24/7 access</p>
+        <p>Provisional member (no 24/7 access yet)</p>
         <form action="<?php echo Utils::base(); ?>/?action=keyholder" method="post">
             <input type="hidden" name="id" value="<?php echo htmlspecialchars($person['id']); ?>" />
             <input type="hidden" name="access" value="BOTH" />
-            <?php if ($person['access'] === 'NO'): ?>
-                <button type="submit" class="btn btn-warning">Make keyholder</button>
-            <?php endif; ?>
+            <button type="submit" class="btn btn-warning">Make full member</button>
         </form>
 <?php
         break;

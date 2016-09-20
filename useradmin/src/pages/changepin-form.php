@@ -4,7 +4,7 @@ $active = 'members';
 require_once('header.php');
 ?>
 <h1>Change PIN</h1>
-<p>If the member isn't a keyholder, this function won't be a huge amount of use.</p>
+<p>If the member has provisional membership, this function won't be a huge amount of use.</p>
 <form action="<?php echo Utils::base(); ?>/?action=changepin" method="POST" class="form-horizontal">
     <input type="hidden" name="card_id" value="<?php echo htmlspecialchars($_GET['card_id']); ?>" />
     <input type="hidden" name="user_id" value="<?php echo htmlspecialchars($_GET['user_id']); ?>" />
