@@ -30,6 +30,15 @@ $cards = $cardStmt->fetchAll();
 $deviceStmt = $dbh->prepare('SELECT * FROM systems WHERE owner=:id');
 $deviceStmt->execute(array('id' => $_GET['id']));
 $devices = $deviceStmt->fetchAll();
+
+
+if (isset($_GET['success']) && $_GET['success'] === '1') {
+?>
+    <div class="alert alert-success">
+        <p>Success!</p>
+    </div>
+<?php
+}
 ?>
 
 
@@ -108,30 +117,41 @@ endswitch;
 <?php endif; ?>
 
 <h2>Devices</h2>
-<?php if (!empty($devices)): ?>
-    <table class="table table-striped">
-        <thead>
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>MAC address</th>
+            <th>Description</th>
+            <th>Source</th>
+            <th>Hidden</th>
+        </tr>
+    </thead>
+    <tbody>
+<?php foreach ($devices as $device): ?>
+        <tr>
+            <td><?php echo htmlspecialchars($device['mac']); ?></td>
+            <td><?php echo htmlspecialchars($device['description']); ?></td>
+            <td><?php echo htmlspecialchars($device['source']); ?></td>
+            <td><?php echo htmlspecialchars($device['hidden']); ?></td>
+        </tr>
+<?php endforeach; ?>
+    </tbody>
+    <form action="<?php echo Utils::base(); ?>/?action=savedevice" method="post">
+        <tfoot>
             <tr>
-                <th>MAC address</th>
-                <th>Description</th>
-                <th>Source</th>
-                <th>Hidden</th>
+                <td colspan="4">Add new...</td>
             </tr>
-        </thead>
-        <tbody>
-    <?php foreach ($devices as $device): ?>
             <tr>
-                <td><?php echo htmlspecialchars($device['mac']); ?></td>
-                <td><?php echo htmlspecialchars($device['description']); ?></td>
-                <td><?php echo htmlspecialchars($device['source']); ?></td>
-                <td><?php echo htmlspecialchars($device['hidden']); ?></td>
+                <td><input type="text" placeholder="AB:CD:AB:CD:AB:CD" name="mac" class="form-control" pattern="^([A-F\d]{2}:){5}[A-F\d]{2}$" required /></td>
+                <td colspan="2"><input type="text" placeholder="Dave's Nexus 6p" name="description" class="form-control" required /></td>
+                <td>
+                    <input type="hidden" name="owner" value="<?php echo $_GET['id']; ?>" />
+                    <button type="submit" class="btn btn-success">Add device</button>
+                </td>
             </tr>
-    <?php endforeach; ?>
-        </tbody>
-    </table>
-<?php else: ?>
-    <p>None registered</p>
-<?php endif; ?>
+        </tfoot>
+    </form>
+</table>
 
 
 <?php require_once('footer.php');
