@@ -139,9 +139,6 @@ endswitch;
     <form action="<?php echo Utils::base(); ?>/?action=savedevice" method="post">
         <tfoot>
             <tr>
-                <td colspan="4">Add new...</td>
-            </tr>
-            <tr>
                 <td><input type="text" placeholder="AB:CD:AB:CD:AB:CD" name="mac" class="form-control" pattern="^([A-F\d]{2}:){5}[A-F\d]{2}$" required /></td>
                 <td colspan="2"><input type="text" placeholder="Dave's Nexus 6p" name="description" class="form-control" required /></td>
                 <td>
