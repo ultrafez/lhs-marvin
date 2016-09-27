@@ -36,12 +36,6 @@ $card = array();
 $card[':card_id'] = strtoupper($_POST['card_id']);
 $card[':pin'] = $makeKeyholder ? $_POST['pin'] : '38169352'; // change this for the member later
 
-$systems = array();
-$systems[':mac'] = strtoupper($_POST['card_id']);
-$systems[':description'] = 'RFID';
-$systems[':source'] = 'r';
-$systems[':hidden'] = 0;
-
 try {
     $dbh = Utils::getPdo();
 

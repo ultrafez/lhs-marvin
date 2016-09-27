@@ -12,7 +12,7 @@ $action = $_GET['action'];
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'GET' && $action === 'addmember') {
-    require_once('pages/addmember-form.php');    
+    require_once('pages/addmember-form.php');
 } else if ($method === 'POST' && $action === 'addmember') {
     require_once('pages/addmember-save.php');
 } else if ($method === 'GET' && $action === 'members') {
@@ -33,6 +33,8 @@ if ($method === 'GET' && $action === 'addmember') {
     }
 } else if ($method === 'POST' && $action === 'changepin') {
     require_once('pages/changepin-save.php');
+} else if ($method === 'POST' && $action === 'savedevice') {
+    require_once('pages/device-save.php');
 } else {
     echo 'Unknown action';
 }

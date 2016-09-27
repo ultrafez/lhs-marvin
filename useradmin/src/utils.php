@@ -13,6 +13,12 @@ class Utils {
         return preg_match($pinRegex, $pin);
     }
 
+    public static function validateMACAddress($mac) {
+        $macRegex = '/([\\dA-F]{2}:){5}[\\dA-F]{2}$/';
+
+        return preg_match($macRegex, $mac);
+    }
+
     public static function getPdo() {
         global $config; // eww
         
