@@ -3,6 +3,7 @@
 
 //#define UPSTAIRS 1
 //#define DOWNSTAIRS 1
+//#define THIRD_DOOR 1
 
 
 #include "ioexpander.h"
@@ -88,6 +89,41 @@
 #define SENSE_PIN 8
 
 #endif /* DOWNSTAIRS */
+
+
+#ifdef THIRD_DOOR
+
+/* downstairs keypad link cable pinout:
+    GND-1 8-RST
+    3v3-2 7-MOSI
+    SDA-3 6-MISO
+    SCL-4 5-SCK */
+
+#define LED_R_PIN GPB(2)
+#define LED_G_PIN GPB(0)
+#define LED_B_PIN GPB(1)
+#define LED_ON 1
+#define LED_OFF 0
+
+#define KP_ROW {GPA(1), GPA(2), GPA(7), GPA(6)}
+#define KP_COL {GPA(3), GPA(4), GPA(5)}
+
+#define RFID1_CS_PIN GPB(6)
+#define RFID1_RST_PIN GPB(7)
+
+// Lock remains open once activated, so only need to trigger for a short amount of time.
+#define UNLOCK_PERIOD 1000
+
+// Blinkenlight
+#define STATUS_PIN 4
+#define STATUS_OFF 0
+#define STATUS_ON 1
+
+#define REMOTE_IO_RST_PIN A2
+
+#define SENSE_PIN 8
+
+#endif /* THIRD_DOOR */
 
 
 #ifndef RFID1_CS_PIN
