@@ -123,6 +123,8 @@
 
 #define SENSE_PIN 8
 
+#define EXTERNAL_EEPROM 1
+
 #endif /* THIRD_DOOR */
 
 
