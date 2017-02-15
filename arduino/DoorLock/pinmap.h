@@ -3,7 +3,7 @@
 
 //#define UPSTAIRS 1
 //#define DOWNSTAIRS 1
-//#define THIRD_DOOR 1
+#define THIRD_DOOR 1
 
 
 #include "ioexpander.h"
@@ -122,6 +122,8 @@
 #define REMOTE_IO_RST_PIN A2
 
 #define SENSE_PIN 8
+
+#define RELEASE_PIN A2
 
 #define EXTERNAL_EEPROM 1
 
