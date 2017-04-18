@@ -9,3 +9,6 @@ all_users:
   ranyardm:
     pubkey: ranyardm.pub
     groups: sudo,lpadmin
+  asilcock:
+    pubkey: asilcock.pub
+    groups: sudo,lpadmin
